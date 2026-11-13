@@ -19,8 +19,8 @@ try {
     ).replace(/\bstudio\b/g, schema),
   );
   process.env.NODE_ENV = "test";
-  const {migrate}=await import('../database/migrate.js');
-  await migrate(database,schema);
+  const { migrate } = await import("../database/migrate.js");
+  await migrate(database, schema);
   process.env.DB_SCHEMA = schema;
   process.env.SETUP_TOKEN = randomBytes(24).toString("hex");
   const { app } = await import("../server.js");
@@ -141,6 +141,105 @@ try {
     page.getByRole("cell", { name: "Studio Owner", exact: true }),
   ).toBeVisible();
   await nav("Dashboard");
+  await nav("Invoices");
+  await page
+    .getByRole("button", { name: "Create invoice", exact: true })
+    .click();
+  await page.getByLabel("Booking", { exact: false }).selectOption({ index: 1 });
+  await expect(page.getByLabel("Unit price (₹)")).toHaveValue("25000.00");
+  await page
+    .getByRole("button", { name: "Issue invoice", exact: true })
+    .click();
+  await expect(page.getByRole("heading", { name: /^INV-/ })).toBeVisible();
+  await page.getByRole("button", { name: "Preview / print PDF" }).click();
+  await expect(page.locator('iframe[title$="PDF preview"]')).toHaveAttribute(
+    "src",
+    /^blob:/,
+  );
+  const invoiceDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download PDF", exact: true }).click();
+  assert.ok((await invoiceDownload).suggestedFilename().startsWith("INV-"));
+  await page.getByRole("button", { name: "Close dialog" }).click();
+  await page.getByRole("button", { name: "View invoice", exact: true }).click();
+  await page.getByRole("button", { name: "Void invoice", exact: true }).click();
+  await page.getByLabel("Reason").fill("Browser test correction");
+  await page.getByRole("button", { name: "Confirm void", exact: true }).click();
+  await expect(page.getByText("Voided: Browser test correction")).toBeVisible();
+  await page.getByRole("button", { name: "Close dialog" }).click();
+  await nav("Payments");
+  await page
+    .getByRole("button", { name: "Download receipt PDF", exact: true })
+    .click();
+  await expect(page.locator('iframe[title$="PDF preview"]')).toHaveAttribute(
+    "src",
+    /^blob:/,
+  );
+  await page.getByRole("button", { name: "Close dialog" }).click();
+  await nav("Equipment");
+  await page
+    .getByRole("button", { name: "Add equipment", exact: true })
+    .click();
+  await page.getByLabel("Asset code").fill("UI-CAM-01");
+  await page.getByLabel("Equipment name").fill("Browser Camera");
+  await page.getByRole("dialog").getByLabel("Category").selectOption("Cameras");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(
+    page.getByRole("cell", { name: "UI-CAM-01", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Assign equipment", exact: true })
+    .click();
+  await page
+    .getByRole("dialog")
+    .getByLabel("Equipment", { exact: false })
+    .selectOption({ index: 1 });
+  await page.getByLabel("Booking", { exact: false }).selectOption({ index: 1 });
+  await page.getByLabel("Expected return date").fill("2026-12-12");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.getByRole("button", { name: "Assignments", exact: true }).click();
+  await page.getByRole("button", { name: "Return", exact: true }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(
+    page.getByRole("cell", { name: "Returned", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Add maintenance", exact: true })
+    .click();
+  await page
+    .getByRole("dialog")
+    .getByLabel("Equipment", { exact: false })
+    .selectOption({ index: 1 });
+  await page.getByLabel("Maintenance type").fill("Cleaning");
+  await page.getByLabel("Description", { exact: false }).fill("Lens cleaning");
+  await page.getByLabel("Maintenance cost").fill("100");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.getByRole("button", { name: "Maintenance", exact: true }).click();
+  await page.getByRole("button", { name: "Record / link expense" }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText(/Expense #/)).toBeVisible();
+  await page.getByRole("button", { name: "Update", exact: true }).click();
+  await page.getByRole("dialog").getByLabel("Status").selectOption("Completed");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(
+    page.getByRole("cell", { name: "Completed", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Inventory", exact: true }).click();
+  await page
+    .getByRole("button", { name: "View equipment", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Assignment history" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Retire equipment", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Confirm retirement", exact: true })
+    .click();
+  await expect(
+    page.getByRole("cell", { name: "Retired", exact: true }),
+  ).toBeVisible();
+  await nav("Dashboard");
   await expect(page.getByText("Money in, money out")).toBeVisible();
   await expect(
     page.getByRole("cell", { name: "12 Dec 2026", exact: true }),
@@ -240,7 +339,7 @@ try {
   ).toBeVisible();
   assert.deepEqual(errors, [], "Browser runtime errors");
   console.log(
-    "PASS: all module forms, receipt/CSV, profile/logout, desktop/mobile layout, generated temporary credentials, enforced first-login password change across reload, confirmation validation and new-password login; no runtime errors.",
+    "PASS: existing module forms; invoice issue/PDF download/void; receipt PDF; equipment create/assign/return/maintenance/expense/retire; profile/logout; desktop/mobile; first-login password changes; no runtime errors.",
   );
 } catch (error) {
   console.error(error);

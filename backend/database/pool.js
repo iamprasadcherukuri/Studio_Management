@@ -1,11 +1,13 @@
 import pg from "pg";
 // Preserve calendar dates rather than converting them to UTC timestamps.
 pg.types.setTypeParser(1082, (value) => value);
-import { config } from "../config/env.js";
+import { config, databaseOptions, databaseTarget } from "../config/env.js";
 export const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL,
+  ...databaseOptions(),
   options: `-c search_path=${config.schema},public`,
-  max: 10,
+  max: databaseTarget === "supabase" ? 5 : 10,
+  connectionTimeoutMillis: 15000,
+  idleTimeoutMillis: 30000,
 });
 export async function transaction(fn) {
   const client = await pool.connect();

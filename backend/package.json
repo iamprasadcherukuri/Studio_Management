@@ -5,17 +5,19 @@
   "scripts": {
     "dev": "node --watch server.js",
     "start": "node server.js",
+    "start:supabase": "node --env-file=.env --env-file=.env.supabase --input-type=module -e \"process.env.DATABASE_TARGET='supabase'; await import('./server.js')\"",
     "db:init": "node database/init.js",
     "db:backup": "node scripts/backup.js",
     "db:migrate": "node database/migrate.js",
     "db:rollback": "node database/migrate.js --down",
+    "cloud:verify": "node scripts/verify-cloud.js",
+    "cloud:prepare": "node scripts/prepare-cloud.js",
     "test": "node --test",
     "verify": "node scripts/verify.js",
     "verify:features": "node scripts/verify-features.js",
     "verify:browser": "node scripts/browser-verify.js"
   },
   "dependencies": {
-    "@fontsource/noto-sans": "^5.3.0",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
     "decimal.js": "^10.6.0",

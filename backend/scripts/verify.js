@@ -14,8 +14,8 @@ try {
     await readFile(new URL("../database/schema.sql", import.meta.url), "utf8")
   ).replace(/\bstudio\b/g, schema);
   await database.query(sql);
-  const {migrate}=await import('../database/migrate.js');
-  await migrate(database,schema);
+  const { migrate } = await import("../database/migrate.js");
+  await migrate(database, schema);
   process.env.NODE_ENV = "test";
   process.env.DB_SCHEMA = schema;
   process.env.SETUP_TOKEN = randomBytes(24).toString("hex");

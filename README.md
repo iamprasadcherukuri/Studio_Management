@@ -95,3 +95,101 @@ List parameters: `search`, `page` (1+), `limit` (1–100); bookings/albums accep
 10. Resize to mobile, navigate with the keyboard, check form errors, empty lists, pagination and printable receipt output.
 
 Automated tests cover validation rules. Build and database/API checks performed during implementation are reported in the delivery response; the manual browser checks above are a repeatable checklist, not a claim that they have all run.
+
+## Invoice PDFs and equipment enhancements
+
+The existing UI and authentication are retained. Administrators now have Invoices and Equipment sidebar entries. Staff permissions remain unchanged. Invoice and equipment dashboard metrics are separate from cash receipts and expenses.
+
+### Installation and additive migration
+
+```powershell
+npm install
+# First installation only: initialize existing core tables.
+npm run db:init
+# Existing and fresh installations: takes a backup, then applies tracked additions.
+npm run db:migrate -w backend
+npm run dev
+```
+
+Migration `001_invoices_equipment` adds five feature tables and `schema_migrations`, indexes, constraints and two protective triggers on existing tables. It never recreates or clears core tables. The runner uses a transaction and advisory lock, verifies existing row counts and validated constraints, and skips applied versions. The invoice trigger prevents changing an issued invoice's booking customer/amount or cancelling it until the invoice is voided. The expense trigger protects maintenance-linked expenses from editing/deletion. Other existing CRUD contracts remain unchanged.
+
+`npm run db:backup -w backend` takes a full custom-format dump and row-count manifest in ignored `backups/`. PostgreSQL 18 Windows tools are detected at the standard install location; override `PG_DUMP_PATH` if needed. Keep backups private because they contain business data and password hashes. `npm run db:rollback -w backend` takes another backup and removes only this migration when all feature tables are empty; it refuses rollback if feature records exist. It does not drop existing core tables. Never bypass this guard to remove live feature data. Production migration requires explicit `--approve-production` in addition to the actual operator approval.
+
+### Invoice and receipt rules
+
+- One active invoice per booking; invoice items minus discount must equal its agreed amount. Quantity has up to three decimal places; item values are rounded half up to paise, then summed using Decimal/PostgreSQL numeric arithmetic. Financial API results are decimal strings.
+- Tax is disabled; nonzero tax requests are rejected. No GST assumptions or tax rate are introduced.
+- Invoice numbers are unique sequence-based identifiers; gaps are possible on rolled-back writes. The active-booking unique index and UUID idempotency key prevent duplicate billing events.
+- Issued customer/studio details and line items are snapshots. Paid and outstanding amounts reflect current booking receipts, including advances received before invoicing. Voided invoices remain in history with reason, user and time; they have zero invoice balance and are excluded from invoice dashboard totals. Replacement invoices inherit existing booking payments without creating payments.
+- Invoices provide details/history, PDF preview, download, printing, and audited voiding. PDFKit produces A4 documents with an embedded open Noto Sans font including the rupee symbol. No logo was configured in the existing studio profile, so documents currently use text branding. Terms are configured per invoice. The signature placeholder appears on receipts.
+- Payment History adds a receipt PDF button. PDFs reuse the existing `PAY-<payment ID>` receipt number; repeated downloads create no receipt or payment rows. The original browser print receipt remains available. Receipt details use current studio/customer details and show current booking payment totals. No payment amounts are changed.
+
+### Equipment and expense rules
+
+Inventory supports unique asset codes, category/status filters, purchase details, edits, details, retirement, and assignment/service history. There is no equipment deletion API. Retired assets cannot be reassigned or edited.
+
+Reservations cover whole days including both boundary dates and must include the booking's event date. Equipment rows are locked during reservation writes. Overlapping active reservations, overdue unreturned assets, maintenance and retirement block assignment. Future reservations are retained in history; Assigned indicates an asset whose assignment has started and is not returned. Return dates cannot be in the future or precede assignment. Resolve all reservations before starting maintenance or retirement. Bookings retain their existing editable dates; if an event date changes, review equipment reservations because their dates do not move automatically.
+
+Purchase cost and maintenance cost do not automatically count as paid expenses. From a maintenance row, explicitly record a paid Equipment expense, or link an existing Equipment expense with exactly the same amount. Each maintenance record can link one expense, and each expense can link one maintenance record. Retrying cannot create another expense. Linked expenses are protected from edits/deletion, preventing ledger/history divergence. Completing maintenance returns the asset to availability. Completed services cannot be reopened; add a new service instead.
+
+### Added API endpoints
+
+All use existing JWT/first-login enforcement and require administrator access. Lists return the existing paginated envelope. Invoice and equipment lists support `search`, `page`, `limit`; invoices support `status`, equipment supports `category` and availability `status`. Assignment/maintenance lists accept `equipment_id`.
+
+| Endpoint                                    | Behavior                                                                                |
+| ------------------------------------------- | --------------------------------------------------------------------------------------- |
+| GET, POST /api/invoices                     | Search/list or issue from a booking with items, dates, discount, terms, idempotency_key |
+| GET /api/invoices/:id                       | Snapshot, exact amounts, current paid/balance, items and audit history                  |
+| GET /api/invoices/booking/:id               | Booking amount and event information for invoice creation                               |
+| GET /api/invoices/:id/pdf                   | PDF attachment; `?preview=1` returns inline                                             |
+| POST /api/invoices/:id/void                 | Void with a required reason                                                             |
+| GET /api/payments/:id/receipt/pdf           | PDF of an existing payment; supports inline preview                                     |
+| GET, POST /api/equipment                    | Inventory list or create                                                                |
+| GET, PUT /api/equipment/:id                 | Details/history or edit                                                                 |
+| PATCH /api/equipment/:id/retire             | Retire while preserving history                                                         |
+| GET, POST /api/equipment-assignments        | History/list or reserve                                                                 |
+| PATCH /api/equipment-assignments/:id/return | Return with actual_return_date                                                          |
+| GET, POST /api/equipment-maintenance        | Service history/list or create                                                          |
+| PATCH /api/equipment-maintenance/:id        | Update status and next_service_date                                                     |
+| POST /api/equipment-maintenance/:id/expense | Explicitly create paid expense (date, method) or link existing_expense_id               |
+| GET /api/feature-summary                    | Invoice and equipment metrics, without altering cash metrics                            |
+
+### Enhancement verification
+
+```powershell
+npm test
+npm run verify
+npm run verify:features -w backend
+npm run verify:browser
+npm run build
+```
+
+All integration/browser fixtures use temporary `studio_test_*` schemas and are cleaned up. The feature suite tests migration rerun and rollback, existing customer/booking operations, exact invoice totals, duplicate events, PDF responses, receipt regeneration, void/reissue, concurrent assignments, returns, maintenance/expense linking, cash totals and permissions. Browser checks exercise the new screens and existing modules. Browser scripts use separate ports 14000/15173 and installed Chrome, leaving the local app servers alone.
+
+## Supabase connection and migration review
+
+The supplied hosted connection is stored only in ignored `backend/.env.supabase`; local `backend/.env` remains unchanged. `backend/.env.supabase.example` contains no credentials. Password special characters are URL-encoded. TLS certificate and hostname verification remain enabled. Save the certificate downloaded from Supabase Database Settings → SSL Configuration to `backend/certs/supabase-ca.crt`, or set an absolute `SUPABASE_CA_PATH`. Never use `rejectUnauthorized:false` to bypass a failed connection check.
+
+```powershell
+# Read-only hosted connectivity, TLS and schema check:
+npm run cloud:verify -w backend
+# Export LOCAL studio schema/data and row-count manifest for review only:
+npm run cloud:prepare -w backend
+```
+
+`cloud:prepare` writes `.dump`, `.sql` and `.counts.json` artifacts to ignored `backups/`; it never writes to Supabase. The SQL includes existing records, sequences, constraints, feature tables and migration history. Inspect it privately before approval. `PG_BIN_PATH` can override the PostgreSQL tool directory (include a trailing slash).
+
+The configured target database is `studio_db` as supplied; this must be verified. Supabase commonly provides database `postgres`; do not silently switch or create a database. Once the CA is installed, `npm run cloud:verify -w backend -- --database=postgres` can perform a read-only diagnostic against that database if needed.
+
+Cloud migration remains pending explicit approval. Review sequence: verify target identity/version and schema state; back up any existing remote studio data; stop application writes during the final local export; compare export counts; inspect the SQL for target-version compatibility; restore only into an approved empty destination schema with no clean/drop flags; verify counts, constraints and sequence values; run authenticated smoke tests; then switch the backend connection. If the target schema already has records, plan a merge explicitly rather than restoring over it. Keep `studio` out of Supabase's exposed Data API schemas; the Express API provides authorization. Do not replace JWT login with Supabase Auth.
+
+After approval and destination readiness, the restore command pattern for Windows is below. It is documentation only; it has not been run against Supabase. `--password` prompts without embedding the secret in shell history. Replace the review dump filename and use the verified database name:
+
+```powershell
+$pgBin = 'C:\Program Files\PostgreSQL\18\bin'
+$env:PGSSLMODE = 'verify-full'
+$env:PGSSLROOTCERT = (Resolve-Path backend/certs/supabase-ca.crt).Path
+& "$pgBin\pg_restore.exe" --host=aws-1-ap-southeast-1.pooler.supabase.com --port=5432 --username=postgres.PROJECT_REF --dbname=VERIFIED_DATABASE --no-owner --no-acl --single-transaction --exit-on-error --password backups/REVIEWED_EXPORT.dump
+```
+
+`npm run start:supabase -w backend` explicitly selects the prepared Supabase connection and a pool of five clients while preserving the local default. It requires the CA certificate and a migrated target schema. It does not initialize or migrate the hosted database. Use a dedicated runtime role and separate production JWT secret before public deployment. The current loopback-bound development server configuration is not a Render deployment configuration; cloud hosting preparation remains a separate stage.

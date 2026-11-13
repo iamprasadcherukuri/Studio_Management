@@ -7,6 +7,127 @@
   font-size: 14px;
   font-weight: 400;
 }
+.feature-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 22px 0;
+}
+.app > aside {
+  overflow-y: auto;
+}
+@media (max-height: 900px) {
+  .sidebar-note {
+    display: none;
+  }
+  .profile {
+    margin-top: auto;
+  }
+  .workspace-label {
+    margin-top: 24px;
+  }
+  nav {
+    gap: 3px;
+  }
+  nav a {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+}
+.feature-metrics > .card {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.feature-metrics span {
+  font-size: 11px;
+  color: #8b9bb1;
+}
+.feature-metrics strong {
+  font-size: 22px;
+  color: #4d6c99;
+  font-weight: 600;
+}
+.equipment-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.feature-tabs {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 17px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid #edf1f7;
+}
+.feature-tabs button {
+  font-size: 11px;
+}
+.feature-tabs button.active {
+  background: #eaf2ff;
+  color: #3979e8;
+  border-color: #d2e2fc;
+}
+.feature-tabs > .text-link {
+  margin-left: auto;
+}
+.feature-section-title {
+  margin: 24px 0 12px;
+}
+.document-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-bottom: 24px;
+  font-size: 12px;
+  color: #8393aa;
+}
+.document-summary strong {
+  color: #47648d;
+  font-size: 15px;
+}
+.invoice-items {
+  margin-top: 25px;
+}
+.invoice-items h3 {
+  margin-bottom: 16px;
+}
+.invoice-item {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 0.7fr) minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: end;
+  margin-bottom: 15px;
+}
+.invoice-item button {
+  font-size: 10px;
+  padding: 10px;
+}
+.pdf-preview {
+  width: 100%;
+  height: 60vh;
+  border: 1px solid #e4ecf6;
+  border-radius: 7px;
+  background: #f6f8fc;
+}
+@media (max-width: 640px) {
+  .feature-metrics,
+  .equipment-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .feature-metrics strong {
+    font-size: 20px;
+  }
+  .invoice-item {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-bottom: 1px solid #e8eef6;
+    padding-bottom: 16px;
+  }
+  .invoice-item > label:first-child {
+    grid-column: 1/-1;
+  }
+}
 .password-change-page {
   min-height: 100vh;
   display: flex;

@@ -40,6 +40,12 @@ import {
   CartesianGrid,
 } from "recharts";
 import { api, message } from "./services/api";
+import {
+  InvoicesPage,
+  EquipmentPage,
+  FeatureSummary,
+  ReceiptPdfButton,
+} from "./pages/Enhancements";
 const money = (n) =>
   new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -71,6 +77,8 @@ const nav = [
   ["Customers", "/customers", Users],
   ["Bookings", "/bookings", CalendarDays],
   ["Payments", "/payments", Wallet],
+  ["Invoices", "/invoices", Receipt],
+  ["Equipment", "/equipment", Camera],
   ["Albums", "/albums", Images],
   ["Expenses", "/expenses", Receipt],
   ["Reports", "/reports", ChartNoAxesCombined],
@@ -249,10 +257,16 @@ function Empty({
     </div>
   );
 }
-function FormFields({ kind, value, setValue, lookups = {} }) {
+function FormFields({
+  kind,
+  value,
+  setValue,
+  lookups = {},
+  definitions = fields,
+}) {
   return (
     <div className="form-grid">
-      {fields[kind].map(([key, label, type = "text", required = true]) => {
+      {definitions[kind].map(([key, label, type = "text", required = true]) => {
         const common = {
           id: key,
           name: key,
@@ -296,9 +310,14 @@ function FormFields({ kind, value, setValue, lookups = {} }) {
                 ))}
               </select>
             ) : Array.isArray(type) ||
-              ["customers", "event_types", "packages", "bookings"].includes(
-                type,
-              ) ? (
+              [
+                "customers",
+                "event_types",
+                "packages",
+                "bookings",
+                "equipment",
+                "expenses",
+              ].includes(type) ? (
               <select {...common}>
                 <option value="">Select {label.toLowerCase()}</option>
                 {(Array.isArray(type) ? type : lookups[type] || []).map((x) => (
@@ -854,6 +873,14 @@ export default function App() {
             ))}
             {isAdmin && (
               <>
+                <Route
+                  path="/invoices"
+                  element={<InvoicesPage ui={featureUi} />}
+                />
+                <Route
+                  path="/equipment"
+                  element={<EquipmentPage ui={featureUi} />}
+                />
                 <Route path="/reports" element={<Reports />} />
                 <Route
                   path="/settings"
@@ -1165,6 +1192,7 @@ function Dashboard({ user }) {
           </NavLink>
         </section>
       </div>
+      {user.role === "admin" && <FeatureSummary ui={featureUi} />}
       <div className="mini-stats">
         <span>
           <Receipt size={18} />
@@ -1185,7 +1213,8 @@ function Dashboard({ user }) {
 }
 function cell(key, value) {
   if (value === null || value === undefined || value === "") return "—";
-  if (["status", "role"].includes(key)) return <Badge>{value}</Badge>;
+  if (["status", "role", "payment_status", "availability"].includes(key))
+    return <Badge>{value}</Badge>;
   if (key === "active") return value ? "Yes" : "No";
   if (
     [
@@ -1197,10 +1226,18 @@ function cell(key, value) {
       "received",
       "booked_amount",
       "receipts",
+      "total_amount",
+      "paid_amount",
+      "balance_amount",
+      "unit_price",
+      "line_total",
+      "purchase_cost",
+      "maintenance_cost",
     ].includes(key)
   )
     return money(value);
-  if (key.includes("date") || key.includes("delivery")) return date(value);
+  if (key.includes("date") || key.includes("delivery") || key === "created_at")
+    return date(value);
   if (key === "booking_id") return "#" + value;
   return String(value);
 }
@@ -1236,6 +1273,18 @@ function Table({ rows, keys, actions }) {
     </div>
   );
 }
+const featureUi = {
+  Heading,
+  Modal,
+  FormFields,
+  Table,
+  Empty,
+  ErrorBox,
+  Badge,
+  money,
+  date,
+  today,
+};
 function Records({ kind, user, settings, embedded = false }) {
   const [rows, setRows] = useState([]),
     [total, setTotal] = useState(0),
@@ -1496,13 +1545,16 @@ function Records({ kind, user, settings, embedded = false }) {
                   </button>
                 )}
                 {kind === "payments" ? (
-                  <button
-                    className="icon-button"
-                    aria-label="View receipt"
-                    onClick={() => setDetail({ receipt: r })}
-                  >
-                    <Printer size={16} />
-                  </button>
+                  <>
+                    <ReceiptPdfButton payment={r} ui={featureUi} />
+                    <button
+                      className="icon-button"
+                      aria-label="View receipt"
+                      onClick={() => setDetail({ receipt: r })}
+                    >
+                      <Printer size={16} />
+                    </button>
+                  </>
                 ) : kind === "users" ? (
                   <button
                     className="text-link"
