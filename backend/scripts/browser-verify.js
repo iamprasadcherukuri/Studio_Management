@@ -247,6 +247,15 @@ try {
   await mkdir(new URL("../../test-results/", import.meta.url), {
     recursive: true,
   });
+  await page.getByRole('button',{name:'Switch to dark mode'}).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
+  await page.reload();
+  await expect(page.getByRole('button',{name:'Switch to light mode'})).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
+  await expect(page.getByText('Money in, money out')).toBeVisible();
+  await page.screenshot({path:fileURLToPath(new URL('../../test-results/dashboard-dark.png',import.meta.url)),fullPage:true});
+  await page.getByRole('button',{name:'Switch to light mode'}).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme','light');
   await page.screenshot({
     path: fileURLToPath(
       new URL("../../test-results/dashboard-desktop.png", import.meta.url),
@@ -295,11 +304,12 @@ try {
     .inputValue();
   assert.ok(temporaryPassword.length >= 12);
   await page.getByRole("button", { name: "Done", exact: true }).click();
-  await page.getByRole("button", { name: "Open profile" }).click();
-  await expect(
-    page.getByRole("region", { name: "Account details" }),
-  ).toContainText("browser@example.test");
-  await page.getByRole("button", { name: "Log out", exact: true }).click();
+  await page.getByRole('button',{name:'Switch to dark mode'}).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
+  await page.getByRole('button',{name:'Switch to light mode'}).click();
+  await expect(page.getByRole('button',{name:'Open profile'})).toHaveCount(0);
+  await page.getByRole('button',{name:'Toggle navigation'}).click();
+  await page.getByRole('button',{name:'Sign out',exact:true}).click();
   await page.getByLabel("Email address").fill("firstlogin@example.test");
   await page.getByLabel("Password", { exact: true }).fill(temporaryPassword);
   await page.getByRole("button", { name: "Sign in to workspace" }).click();
@@ -335,7 +345,7 @@ try {
     page.getByRole("heading", { name: "Set your own password" }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Open profile" }),
+    page.getByRole("button", { name: "Switch to dark mode" }),
   ).toBeVisible();
   assert.deepEqual(errors, [], "Browser runtime errors");
   console.log(

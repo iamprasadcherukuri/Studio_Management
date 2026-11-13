@@ -29,6 +29,8 @@ import {
   Trash2,
   Check,
   ShieldCheck,
+  Moon,
+  Sun,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -656,74 +658,14 @@ function FirstLoginPassword({ user, onDone }) {
     </div>
   );
 }
-function ProfileMenu({ user, onLogout }) {
-  const [expanded, setExpanded] = useState(false);
-  const container = React.useRef(null);
-  const trigger = React.useRef(null);
-  useEffect(() => {
-    if (!expanded) return;
-    const dismiss = (event) => {
-      if (!container.current?.contains(event.target)) setExpanded(false);
-    };
-    const escape = (event) => {
-      if (event.key === "Escape") {
-        setExpanded(false);
-        trigger.current?.focus();
-      }
-    };
-    document.addEventListener("pointerdown", dismiss);
-    document.addEventListener("keydown", escape);
-    return () => {
-      document.removeEventListener("pointerdown", dismiss);
-      document.removeEventListener("keydown", escape);
-    };
-  }, [expanded]);
-  return (
-    <div
-      className="profile-menu"
-      ref={container}
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget))
-          setExpanded(false);
-      }}
-    >
-      <button
-        ref={trigger}
-        className="avatar small profile-trigger"
-        aria-label="Open profile"
-        aria-expanded={expanded}
-        aria-controls="profile-details"
-        onClick={() => setExpanded(!expanded)}
-      >
-        {user.name[0].toUpperCase()}
-      </button>
-      {expanded && (
-        <div
-          id="profile-details"
-          className="profile-dropdown"
-          role="region"
-          aria-label="Account details"
-        >
-          <div className="profile-details">
-            <strong>{user.name}</strong>
-            <span>{user.email}</span>
-          </div>
-          <button
-            className="profile-logout"
-            onClick={() => {
-              setExpanded(false);
-              onLogout();
-            }}
-          >
-            <LogOut size={16} />
-            Log out
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
 export default function App() {
+  const [theme,setTheme]=useState(()=>{
+    try{return localStorage.getItem('studio-theme')==='dark'?'dark':'light';}catch{return 'light';}
+  });
+  useEffect(()=>{
+    document.documentElement.dataset.theme=theme;
+    try{localStorage.setItem('studio-theme',theme);}catch{/* Theme still works when browser storage is unavailable. */}
+  },[theme]);
   const [user, setUser] = useState(null),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
@@ -837,15 +779,15 @@ export default function App() {
           <div className="topbar-right">
             <span className="studio-dot" />
             <span className="studio-name">{settings.name}</span>
-            <span className="divider" />
-            <ProfileMenu
-              user={user}
-              onLogout={() => {
-                sessionStorage.removeItem("studio-token");
-                setOpen(false);
-                setUser(null);
-              }}
-            />
+            <button
+              className="theme-toggle"
+              aria-label={theme==='dark'?'Switch to light mode':'Switch to dark mode'}
+              aria-pressed={theme==='dark'}
+              title={theme==='dark'?'Switch to light mode':'Switch to dark mode'}
+              onClick={()=>setTheme(current=>current==='dark'?'light':'dark')}
+            >
+              {theme==='dark'?<Sun size={19} aria-hidden="true"/>:<Moon size={19} aria-hidden="true"/>}
+            </button>
           </div>
         </header>
         <main className="content">

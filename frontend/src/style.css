@@ -488,54 +488,13 @@ nav a i {
 .profile button {
   margin-left: auto;
 }
-.profile-menu {
-  position: relative;
-}
-.profile-trigger {
-  padding: 0;
-  cursor: pointer;
-}
-.profile-trigger:hover {
-  box-shadow: 0 0 0 3px #e6eefb;
-}
-.profile-dropdown {
-  position: absolute;
-  top: calc(100% + 12px);
-  right: 0;
-  width: 260px;
-  max-width: calc(100vw - 32px);
-  background: white;
-  border: 1px solid #e1e8f2;
+.theme-toggle {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
   border-radius: 10px;
-  box-shadow: 0 12px 36px #263b6026;
-  z-index: 30;
-  overflow: hidden;
-}
-.profile-details {
-  padding: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.profile-details strong {
-  font-size: 13px;
-  color: #344b6d;
-  overflow-wrap: anywhere;
-}
-.profile-details span {
-  font-size: 12px;
-  color: #8493a9;
-  overflow-wrap: anywhere;
-}
-.profile-logout {
-  width: 100%;
-  justify-content: flex-start;
-  border: 0;
-  border-top: 1px solid #edf1f7;
-  border-radius: 0;
-  padding: 13px 18px;
-  font-size: 12px;
-  color: #526f9c;
+  padding:0;
+  color:#5277ad;
 }
 .studio-name {
   max-width: 180px;
