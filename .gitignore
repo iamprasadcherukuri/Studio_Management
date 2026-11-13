@@ -2,11 +2,10 @@ node_modules/
 dist/
 .env
 .env.*
-!.env.example
-!.env.supabase.example
 *.log
 test-results/
 .env.*
-!.env.example
 build/
 coverage/
+backups/
+vercel.json
