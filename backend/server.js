@@ -4,10 +4,12 @@ import helmet from "helmet";
 import { ZodError } from "zod";
 import { config } from "./config/env.js";
 import { api } from "./controllers/api.js";
+import { enhancements } from "./routes/enhancements.js";
 export const app = express();
 app.use(helmet());
 app.use(cors({ origin: config.origin }));
 app.use(express.json({ limit: "100kb" }));
+app.use('/api',enhancements);
 app.use("/api", api);
 app.use((req, res) => res.status(404).json({ error: "Endpoint not found" }));
 app.use((error, req, res, next) => {
@@ -28,6 +30,7 @@ app.use((error, req, res, next) => {
       });
   if (error.code === "23505")
     return res.status(409).json({ error: "This record already exists." });
+  if (error.code === 'P0001') return res.status(409).json({error:error.message});
   if (["23514", "22P02", "22007", "22008", "22003"].includes(error.code))
     return res
       .status(400)

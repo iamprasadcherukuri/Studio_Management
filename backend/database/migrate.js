@@ -9,6 +9,9 @@ export async function migrate(client,schema='studio',down=false){
  try {
   await client.query("SELECT set_config('search_path',$1,true)",[`${schema},public`]);
   await client.query("SELECT pg_advisory_xact_lock(hashtext($1))",['studio-migrations:'+schema]);
+  const existing=['roles','users','customers','event_types','packages','staff','bookings','booking_staff','payments','albums','expenses','audit_logs','studio_settings'];
+  const counts=async()=>{const result={};for(const table of existing)result[table]=(await client.query(`SELECT count(*)::text AS count FROM ${table}`)).rows[0].count;return result;};
+  const before=await counts();
   await client.query('CREATE TABLE IF NOT EXISTS schema_migrations(version TEXT PRIMARY KEY,applied_at TIMESTAMPTZ NOT NULL DEFAULT now())');
   const version='001_invoices_equipment';const exists=(await client.query('SELECT 1 FROM schema_migrations WHERE version=$1',[version])).rowCount;
   if(down&&exists){
@@ -17,6 +20,9 @@ export async function migrate(client,schema='studio',down=false){
    await client.query(await readFile(new URL(`./migrations/${version}.down.sql`,import.meta.url),'utf8'));
    await client.query('DELETE FROM schema_migrations WHERE version=$1',[version]);
   } else if(!down&&!exists){await client.query(await readFile(new URL(`./migrations/${version}.up.sql`,import.meta.url),'utf8'));await client.query('INSERT INTO schema_migrations(version) VALUES($1)',[version]);}
+  if(JSON.stringify(before)!==JSON.stringify(await counts()))throw new Error('Existing row counts changed; migration rolled back');
+  const invalid=await client.query('SELECT conname FROM pg_constraint WHERE connamespace=$1::regnamespace AND NOT convalidated',[schema]);
+  if(invalid.rowCount)throw new Error('Unvalidated database constraints; migration rolled back');
   await client.query('COMMIT');
  }catch(error){await client.query('ROLLBACK');throw error;}
 }

@@ -19,6 +19,8 @@ try {
     ).replace(/\bstudio\b/g, schema),
   );
   process.env.NODE_ENV = "test";
+  const {migrate}=await import('../database/migrate.js');
+  await migrate(database,schema);
   process.env.DB_SCHEMA = schema;
   process.env.SETUP_TOKEN = randomBytes(24).toString("hex");
   const { app } = await import("../server.js");

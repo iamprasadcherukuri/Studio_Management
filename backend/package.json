@@ -6,8 +6,12 @@
     "dev": "node --watch server.js",
     "start": "node server.js",
     "db:init": "node database/init.js",
+    "db:backup": "node scripts/backup.js",
+    "db:migrate": "node database/migrate.js",
+    "db:rollback": "node database/migrate.js --down",
     "test": "node --test",
     "verify": "node scripts/verify.js",
+    "verify:features": "node scripts/verify-features.js",
     "verify:browser": "node scripts/browser-verify.js"
   },
   "dependencies": {

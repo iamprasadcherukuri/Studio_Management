@@ -8,7 +8,7 @@ CREATE TABLE invoices (
  tax_amount NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK(tax_amount=0),
  total_amount NUMERIC(12,2) NOT NULL CHECK(total_amount>=0 AND total_amount=subtotal-discount+tax_amount),
  status TEXT NOT NULL DEFAULT 'Issued' CHECK(status IN ('Issued','Void')),
- terms TEXT NOT NULL DEFAULT '',idempotency_key UUID UNIQUE NOT NULL,
+ terms TEXT NOT NULL DEFAULT '',idempotency_key UUID UNIQUE NOT NULL,request_hash TEXT NOT NULL,
  created_by INTEGER NOT NULL REFERENCES users(id),created_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  void_reason TEXT,voided_by INTEGER REFERENCES users(id),voided_at TIMESTAMPTZ,
  CHECK(status<>'Void' OR (length(trim(void_reason))>0 AND voided_by IS NOT NULL AND voided_at IS NOT NULL))
