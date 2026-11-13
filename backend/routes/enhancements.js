@@ -31,7 +31,11 @@ for (const path of [
   "/feature-summary",
 ])
   enhancements.use(path, auth, admin);
-enhancements.use("/payments/:id/receipt/pdf", auth, admin);
+enhancements.use("/payments/:id/receipt", auth, admin);
+enhancements.get("/payments/:id/receipt", async (req, res) => {
+  const { logo, ...data } = await receiptDetails(req.params.id);
+  res.set("Cache-Control", "no-store").json(data);
+});
 const paging = (req) => ({
   page: Math.max(1, parseInt(req.query.page) || 1),
   limit: Math.min(100, Math.max(1, parseInt(req.query.limit) || 20)),
@@ -76,7 +80,7 @@ enhancements.post("/invoices", async (req, res) =>
 enhancements.get("/invoices/booking/:id", async (req, res) => {
   const row = (
     await pool.query(
-      "SELECT b.id,b.agreed_amount,b.event_date,b.status,e.name AS event_type FROM bookings b JOIN event_types e ON e.id=b.event_type_id WHERE b.id=$1",
+      "SELECT b.id,b.agreed_amount,b.discount_amount,(b.agreed_amount+b.discount_amount)::numeric(12,2) AS gross_amount,b.event_date,b.status,e.name AS event_type FROM bookings b JOIN event_types e ON e.id=b.event_type_id WHERE b.id=$1",
       [req.params.id],
     )
   ).rows[0];
@@ -241,7 +245,7 @@ enhancements.get("/feature-summary", async (req, res) =>
     (
       await pool.query(`SELECT
  (SELECT coalesce(sum(total_amount),0)::numeric(12,2) FROM invoices WHERE status='Issued') AS total_invoiced,
- (SELECT coalesce(sum(greatest(i.total_amount-coalesce(p.paid,0),0)),0)::numeric(12,2) FROM invoices i LEFT JOIN (SELECT booking_id,sum(amount) AS paid FROM payments GROUP BY booking_id)p ON p.booking_id=i.booking_id WHERE i.status='Issued') AS invoice_outstanding,
+ (SELECT coalesce(sum(greatest(i.total_amount-coalesce(p.paid,0),0)),0)::numeric(12,2) FROM invoices i LEFT JOIN (SELECT booking_id,sum(amount) AS paid FROM payment_ledger GROUP BY booking_id)p ON p.booking_id=i.booking_id WHERE i.status='Issued') AS invoice_outstanding,
  count(*)::int AS total_equipment,count(*) FILTER(WHERE availability='Available')::int AS available_equipment,count(*) FILTER(WHERE availability='Assigned')::int AS assigned_equipment,count(*) FILTER(WHERE availability='Maintenance')::int AS maintenance_equipment
  FROM (${equipmentSelect}) inventory`)
     ).rows[0],

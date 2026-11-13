@@ -1,11 +1,13 @@
 import PDFDocument from "pdfkit";
 import Decimal from "decimal.js";
 import { fileURLToPath } from "node:url";
+import { renderReceiptPdf } from "./receipt-pdf.js";
 const font = fileURLToPath(
   new URL("../assets/fonts/NotoSans-Regular.ttf", import.meta.url),
 );
 const currency = (v) => "₹ " + new Decimal(v || 0).toFixed(2);
 export function renderPdf(kind, data) {
+  if (kind === "receipt") return renderReceiptPdf(data);
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
       size: "A4",
@@ -136,7 +138,12 @@ export function renderPdf(kind, data) {
         pair("Payment ID", "#" + data.id);
         pair("Payment method", data.method);
         pair("Transaction reference", data.reference || "—");
-        pair("Amount received", currency(data.amount));
+        pair("Original amount received", currency(data.amount));
+        pair("Amount reversed", currency(data.reversed_amount || 0));
+        pair(
+          "Net retained for this payment",
+          currency(new Decimal(data.amount).minus(data.reversed_amount || 0)),
+        );
         pair("Booking total", currency(data.agreed_amount));
         pair("Total booking receipts", currency(data.paid_amount));
         pair(

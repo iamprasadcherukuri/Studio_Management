@@ -334,7 +334,7 @@ try {
     body: { email: account.email, password: account.temporary_password },
     status: 401,
   });
-  const staffToken = (
+  let staffToken = (
     await request("/auth/login", {
       method: "POST",
       body: { email: "staff@example.test", password },
@@ -350,6 +350,48 @@ try {
     body: {},
     status: 403,
   });
+  await request(`/users/${account.id}/reset-password`, {
+    method: "POST",
+    body: { current_password: "wrong" },
+    status: 400,
+  });
+  await request(`/users/${account.id}/reset-password`, {
+    method: "POST",
+    body: { current_password: password },
+    auth: staffToken,
+    status: 403,
+  });
+  const reset = await request(`/users/${account.id}/reset-password`, {
+    method: "POST",
+    body: { current_password: password },
+  });
+  assert.ok(reset.temporary_password.length >= 12);
+  assert.equal(reset.must_change_password, true);
+  await request("/customers", { auth: staffToken, status: 401 });
+  await request("/auth/login", {
+    method: "POST",
+    body: { email: account.email, password },
+    status: 401,
+  });
+  const resetLogin = await request("/auth/login", {
+    method: "POST",
+    body: { email: account.email, password: reset.temporary_password },
+  });
+  await request("/customers", { auth: resetLogin.token, status: 403 });
+  await request("/auth/change-password", {
+    method: "POST",
+    auth: resetLogin.token,
+    body: {
+      current_password: reset.temporary_password,
+      new_password: password,
+    },
+  });
+  staffToken = (
+    await request("/auth/login", {
+      method: "POST",
+      body: { email: account.email, password },
+    })
+  ).token;
   await request("/users/" + account.id, {
     method: "PATCH",
     body: { active: false },

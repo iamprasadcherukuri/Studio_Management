@@ -8,6 +8,11 @@ import { config } from "../config/env.js";
 import { auth, admin } from "../middleware/auth.js";
 import { parse } from "../services/validation.js";
 import { definitions, writeRecord, fail } from "../services/records.js";
+import { studioSettings, saveStudioSettings } from "../services/branding.js";
+import {
+  reversePayment,
+  reversalHistory,
+} from "../services/payment-reversals.js";
 export const api = Router();
 const limited = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -18,16 +23,17 @@ const limited = rateLimit({
 api.get("/health", async (req, res) => {
   res.set("Cache-Control", "no-store");
   try {
-    await pool.query({ text: "SELECT 1", query_timeout: 5000 });
+    await pool.query({
+      text: "SELECT l.amount,l.booking_id,p.receipt_number,p.receipt_snapshot,b.total_amount,s.logo_asset_id FROM payment_ledger l CROSS JOIN payments p CROSS JOIN bookings b CROSS JOIN studio_settings s LIMIT 0",
+      query_timeout: 5000,
+    });
     res.json({ status: "OK", service: "Studio Management API" });
   } catch {
-    res
-      .status(503)
-      .json({
-        status: "ERROR",
-        service: "Studio Management API",
-        error: "Database unavailable",
-      });
+    res.status(503).json({
+      status: "ERROR",
+      service: "Studio Management API",
+      error: "Database unavailable",
+    });
   }
 });
 api.get("/auth/status", async (req, res) => {
@@ -93,6 +99,12 @@ api.post("/auth/login", limited, async (req, res) => {
 });
 api.use(auth);
 api.get("/auth/me", (req, res) => res.json(req.user));
+api.get("/payments/:id/reversals", admin, async (req, res) =>
+  res.json({ data: await reversalHistory(req.params.id) }),
+);
+api.post("/payments/:id/reversals", admin, async (req, res) =>
+  res.status(201).json(await reversePayment(req.params.id, req.body, req.user)),
+);
 api.post("/auth/change-password", limited, async (req, res) => {
   const data = parse("changePassword", req.body);
   await transaction(async (c) => {
@@ -135,12 +147,12 @@ api.get("/lookups", async (req, res) => {
 api.get("/dashboard", async (req, res) => {
   const metrics = (
     await pool.query(
-      `SELECT (SELECT count(*) FROM customers) AS customers,(SELECT count(*) FROM bookings) AS bookings,(SELECT COALESCE(sum(amount),0) FROM payments) AS received,(SELECT COALESCE(sum(agreed_amount),0) FROM bookings WHERE status<>'cancelled')-(SELECT COALESCE(sum(amount),0) FROM payments) AS pending,(SELECT COALESCE(sum(amount),0) FROM expenses) AS expenses,(SELECT count(*) FROM albums WHERE status<>'Delivered') AS pending_albums`,
+      `SELECT (SELECT count(*) FROM customers) AS customers,(SELECT count(*) FROM bookings) AS bookings,(SELECT COALESCE(sum(amount),0) FROM payment_ledger) AS received,(SELECT COALESCE(sum(agreed_amount),0) FROM bookings WHERE status<>'cancelled')-(SELECT COALESCE(sum(amount),0) FROM payment_ledger) AS pending,(SELECT COALESCE(sum(amount),0) FROM expenses) AS expenses,(SELECT count(*) FROM albums WHERE status<>'Delivered') AS pending_albums`,
     )
   ).rows[0];
   const months = (
     await pool.query(
-      `SELECT to_char(m,'Mon') AS month,COALESCE((SELECT sum(amount) FROM payments WHERE date>=m AND date<m+interval '1 month'),0) AS revenue,COALESCE((SELECT sum(amount) FROM expenses WHERE date>=m AND date<m+interval '1 month'),0) AS expenses FROM generate_series(date_trunc('month',CURRENT_DATE)-interval '5 months',date_trunc('month',CURRENT_DATE),interval '1 month') m`,
+      `SELECT to_char(m,'Mon') AS month,COALESCE((SELECT sum(amount) FROM payment_ledger WHERE date>=m AND date<m+interval '1 month'),0) AS revenue,COALESCE((SELECT sum(amount) FROM expenses WHERE date>=m AND date<m+interval '1 month'),0) AS expenses FROM generate_series(date_trunc('month',CURRENT_DATE)-interval '5 months',date_trunc('month',CURRENT_DATE),interval '1 month') m`,
     )
   ).rows;
   const bookings = (
@@ -167,21 +179,11 @@ api.get("/customers/:id/history", async (req, res) => {
   );
   res.json(rows);
 });
-api.get("/settings", async (req, res) =>
-  res.json(
-    (await pool.query("SELECT * FROM studio_settings WHERE id=1")).rows[0],
-  ),
-);
+api.get("/settings", async (req, res) => res.json(await studioSettings()));
 api.put("/settings", admin, async (req, res) => {
   const v = parse("settings", req.body);
-  res.json(
-    (
-      await pool.query(
-        "UPDATE studio_settings SET name=$1,phone=$2,email=$3,address=$4 WHERE id=1 RETURNING *",
-        Object.values(v),
-      )
-    ).rows[0],
-  );
+  await saveStudioSettings(v);
+  res.json(await studioSettings());
 });
 api.get("/users", admin, async (req, res) =>
   res.json({
@@ -221,6 +223,47 @@ api.patch("/users/:id", admin, async (req, res) => {
     ).rows[0],
   );
 });
+api.post("/users/:id/reset-password", admin, limited, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) throw fail("Invalid user ID");
+  if (id === req.user.id)
+    throw fail("Use your current password to change your own password instead");
+  const input = parse("resetPassword", req.body);
+  const temporaryPassword = randomBytes(18).toString("base64url");
+  const hash = await bcrypt.hash(temporaryPassword, 12);
+  const user = await transaction(async (c) => {
+    const rows = (
+      await c.query(
+        "SELECT id,name,email,password_hash,password_version,active FROM users WHERE id=ANY($1::int[]) ORDER BY id FOR UPDATE",
+        [[req.user.id, id]],
+      )
+    ).rows;
+    const actor = rows.find((row) => row.id === req.user.id),
+      target = rows.find((row) => row.id === id);
+    if (!actor?.active || actor.password_version !== req.user.password_version)
+      throw fail("Session expired; please sign in again", 401);
+    if (!(await bcrypt.compare(input.current_password, actor.password_hash)))
+      throw fail("Your current password is incorrect");
+    if (!target) throw fail("User not found", 404);
+    if (!target.active)
+      throw fail("Enable this account before resetting its password");
+    await c.query(
+      "UPDATE users SET password_hash=$1,must_change_password=true,password_version=password_version+1 WHERE id=$2",
+      [hash, id],
+    );
+    await c.query(
+      "INSERT INTO audit_logs(user_id,action,entity,entity_id) VALUES($1,'reset_password','users',$2)",
+      [req.user.id, id],
+    );
+    return { id: target.id, name: target.name, email: target.email };
+  });
+  res.set("Cache-Control", "no-store").json({
+    ...user,
+    temporary_password: temporaryPassword,
+    must_change_password: true,
+    reset: true,
+  });
+});
 api.get("/reports", admin, async (req, res) => {
   const from = String(req.query.from || "2000-01-01"),
     to = String(req.query.to || "2100-12-31");
@@ -232,11 +275,11 @@ api.get("/reports", admin, async (req, res) => {
     throw fail("Select a valid date range");
   const sql = {
     receipts:
-      "SELECT p.id,p.date,c.name AS customer,p.booking_id,p.amount,p.method FROM payments p JOIN bookings b ON b.id=p.booking_id JOIN customers c ON c.id=b.customer_id WHERE p.date BETWEEN $1 AND $2 ORDER BY p.date DESC",
+      "SELECT p.id,p.payment_id,p.entry_type,p.date,c.name AS customer,p.booking_id,p.amount,p.method FROM payment_ledger p JOIN bookings b ON b.id=p.booking_id JOIN customers c ON c.id=b.customer_id WHERE p.date BETWEEN $1 AND $2 ORDER BY p.date DESC",
     bookings:
       "SELECT b.id,b.event_date,c.name AS customer,b.location,b.status,b.agreed_amount FROM bookings b JOIN customers c ON c.id=b.customer_id WHERE event_date BETWEEN $1 AND $2 ORDER BY event_date",
     outstanding:
-      "SELECT b.id,c.name AS customer,b.event_date,b.agreed_amount,COALESCE(sum(p.amount),0) AS received,b.agreed_amount-COALESCE(sum(p.amount),0) AS outstanding FROM bookings b JOIN customers c ON c.id=b.customer_id LEFT JOIN payments p ON p.booking_id=b.id WHERE b.status<>'cancelled' AND b.event_date BETWEEN $1 AND $2 GROUP BY b.id,c.name HAVING b.agreed_amount>COALESCE(sum(p.amount),0)",
+      "SELECT b.id,c.name AS customer,b.event_date,b.agreed_amount,COALESCE(sum(p.amount),0) AS received,b.agreed_amount-COALESCE(sum(p.amount),0) AS outstanding FROM bookings b JOIN customers c ON c.id=b.customer_id LEFT JOIN payment_ledger p ON p.booking_id=b.id WHERE b.status<>'cancelled' AND b.event_date BETWEEN $1 AND $2 GROUP BY b.id,c.name HAVING b.agreed_amount>COALESCE(sum(p.amount),0)",
     expenses:
       "SELECT id,date,category,description,amount,method FROM expenses WHERE date BETWEEN $1 AND $2 ORDER BY date DESC",
     albums:
@@ -244,15 +287,15 @@ api.get("/reports", admin, async (req, res) => {
     customers:
       "SELECT c.customer_code,c.name,c.mobile,count(b.id)::int AS bookings,COALESCE(sum(b.agreed_amount),0) AS booked_amount FROM customers c LEFT JOIN bookings b ON b.customer_id=c.id AND b.event_date BETWEEN $1 AND $2 GROUP BY c.id ORDER BY c.name",
     summary:
-      "SELECT 'Receipts' AS category,COALESCE(sum(amount),0) AS amount FROM payments WHERE date BETWEEN $1 AND $2 UNION ALL SELECT 'Expenses paid',COALESCE(sum(amount),0) FROM expenses WHERE date BETWEEN $1 AND $2 UNION ALL SELECT 'Net cash balance',(SELECT COALESCE(sum(amount),0) FROM payments WHERE date BETWEEN $1 AND $2)-(SELECT COALESCE(sum(amount),0) FROM expenses WHERE date BETWEEN $1 AND $2)",
+      "SELECT 'Receipts' AS category,COALESCE(sum(amount),0) AS amount FROM payment_ledger WHERE date BETWEEN $1 AND $2 UNION ALL SELECT 'Expenses paid',COALESCE(sum(amount),0) FROM expenses WHERE date BETWEEN $1 AND $2 UNION ALL SELECT 'Net cash balance',(SELECT COALESCE(sum(amount),0) FROM payment_ledger WHERE date BETWEEN $1 AND $2)-(SELECT COALESCE(sum(amount),0) FROM expenses WHERE date BETWEEN $1 AND $2)",
     categories:
       "SELECT category,sum(amount) AS amount FROM expenses WHERE date BETWEEN $1 AND $2 GROUP BY category ORDER BY category",
     monthly:
-      "SELECT to_char(date,'YYYY-MM') AS month,sum(amount) AS receipts FROM payments WHERE date BETWEEN $1 AND $2 GROUP BY 1 ORDER BY 1",
+      "SELECT to_char(date,'YYYY-MM') AS month,sum(amount) AS receipts FROM payment_ledger WHERE date BETWEEN $1 AND $2 GROUP BY 1 ORDER BY 1",
     daily:
-      "SELECT date,sum(amount) AS receipts FROM payments WHERE date BETWEEN $1 AND $2 GROUP BY date ORDER BY date",
+      "SELECT date,sum(amount) AS receipts FROM payment_ledger WHERE date BETWEEN $1 AND $2 GROUP BY date ORDER BY date",
     yearly:
-      "SELECT to_char(date,'YYYY') AS year,sum(amount) AS receipts FROM payments WHERE date BETWEEN $1 AND $2 GROUP BY 1 ORDER BY 1",
+      "SELECT to_char(date,'YYYY') AS year,sum(amount) AS receipts FROM payment_ledger WHERE date BETWEEN $1 AND $2 GROUP BY 1 ORDER BY 1",
   };
   const kind = String(req.query.type || "summary");
   if (!sql[kind]) throw fail("Unknown report");

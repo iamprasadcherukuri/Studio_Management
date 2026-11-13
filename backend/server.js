@@ -23,7 +23,7 @@ app.use(
     maxAge: 600,
   }),
 );
-app.use(express.json({ limit: "100kb" }));
+app.use(express.json({ limit: "256kb" }));
 app.get("/", (req, res) =>
   res.json({ status: "OK", service: "Studio Management API" }),
 );

@@ -16,7 +16,7 @@ test("payments require positive amounts, valid dates and an idempotency key", ()
     { amount: 1.234 },
     { date: "2026-02-30" },
     { idempotency_key: "" },
-    { method: "Card" },
+    { method: "Unsupported" },
   ])
     assert.throws(() => parse("payments", { ...payment, ...patch }));
 });

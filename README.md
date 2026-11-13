@@ -18,6 +18,7 @@ Generate separate random secrets for `JWT_SECRET` and `SETUP_TOKEN` (at least 32
 ```powershell
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 npm run db:init
+npm run db:migrate -w backend
 # Optional packages only, clearly labeled demo data:
 npm run db:init -w backend -- --demo
 npm run dev
@@ -45,7 +46,7 @@ New accounts created under Users receive a temporary password (generated automat
 
 Admin has full access. Staff can read the dashboard and manage customers, bookings and albums; financial modules, reports, settings, user management and all deletion require admin. Permissions are enforced by the API. Customers, packages and staff referenced by bookings cannot be deleted. Bookings and albums are retained; update their workflow state instead. Users can be disabled, and disabled users immediately lose API access.
 
-Payments are append-only receipts. Every submission has a UUID idempotency key, and the booking is locked inside a transaction before validating its outstanding balance. Retrying the same submission returns the original receipt. Overpayments and payments to cancelled bookings are rejected. Agreed amounts cannot be lowered below receipts; bookings with receipts cannot be cancelled. There is no refund or payment correction workflow in this version. Amounts use PostgreSQL `NUMERIC(12,2)` and validation allows two decimal places. Printing cost on an album is an estimate; enter the actual paid cost once under Expenses. Booking advances are entered once through Payments. Net cash balance means receipts minus expenses paid, not accounting profit.
+Payments are append-only receipts. Every submission has a UUID idempotency key, and the booking is locked inside a transaction before validating its outstanding balance. Retrying the same submission returns the original receipt. Overpayments and payments to cancelled bookings are rejected. Agreed amounts cannot be lowered below net receipts; bookings with net receipts cannot be cancelled. Full and partial reversals are separate audited records, never edits to the original payment. Amounts use PostgreSQL `NUMERIC(12,2)` and validation allows two decimal places. Printing cost on an album is an estimate; enter the actual paid cost once under Expenses. Booking advances are entered once through Payments. Net cash balance means net receipts after reversals minus expenses paid, not accounting profit.
 
 Reports use inclusive date ranges. Receipt reports filter payment date, expense reports expense date, booking/outstanding/customer reports event date, and album reports actual delivery date or expected date if undelivered. Outstanding reports show current balances for bookings in the event-date range; they are not historical balance snapshots. Category totals and daily/monthly/yearly receipts are available. Customer History on the Customers page shows bookings, paid totals and balances. CSV export protects spreadsheet formula cells.
 
@@ -113,7 +114,7 @@ npm run dev
 
 Migration `001_invoices_equipment` adds five feature tables and `schema_migrations`, indexes, constraints and two protective triggers on existing tables. It never recreates or clears core tables. The runner uses a transaction and advisory lock, verifies existing row counts and validated constraints, and skips applied versions. The invoice trigger prevents changing an issued invoice's booking customer/amount or cancelling it until the invoice is voided. The expense trigger protects maintenance-linked expenses from editing/deletion. Other existing CRUD contracts remain unchanged.
 
-`npm run db:backup -w backend` takes a full custom-format dump and row-count manifest in ignored `backups/`. PostgreSQL 18 Windows tools are detected at the standard install location; override `PG_DUMP_PATH` if needed. Keep backups private because they contain business data and password hashes. `npm run db:rollback -w backend` takes another backup and removes only this migration when all feature tables are empty; it refuses rollback if feature records exist. It does not drop existing core tables. Never bypass this guard to remove live feature data. Production migration requires explicit `--approve-production` in addition to the actual operator approval.
+`npm run db:backup -w backend` takes a full custom-format local dump and row-count manifest from the same PostgreSQL snapshot in ignored `backups/`. It checks the archive with `pg_restore --list` and writes a SHA-256 verification manifest. PostgreSQL 18 Windows tools are detected at the standard install location; override `PG_BIN_PATH`, `PG_DUMP_PATH` or `PG_RESTORE_PATH` if needed. Keep backups private because they contain business data and password hashes. The verified backup/restore tooling is restricted to local PostgreSQL and refuses hosted targets. `npm run db:rollback -w backend` backs up and rolls back only the latest applied migration when all feature/reversal tables are empty; it refuses rollback otherwise. It does not drop existing core tables. Never bypass this guard to remove live feature data. Production changes require a separately reviewed target backup and explicit approval.
 
 ### Invoice and receipt rules
 
@@ -220,7 +221,7 @@ Set these in Render's Environment settings before redeploying:
 
 Supabase mode accepts `SUPABASE_DATABASE_URL` or, as a fallback, `DATABASE_URL`; it no longer requires a separate local URL. URL SSL query options cannot disable verified TLS. Supply either `SUPABASE_CA_CERT` (multiline PEM, or escaped newlines), `SUPABASE_CA_PATH` (for a Render secret file), or the default bundled local certificate path. Verification stays enabled. Confirm the database name from the Supabase Connect panel; it is commonly `postgres`, and must not be assumed to be `studio_db`. No production schema/data migration is performed by startup.
 
-Both `/` and `/api/health` return `{ "status": "OK", "service": "Studio Management API" }`. `/` is a liveness route; `/api/health` also checks PostgreSQL. Database failure returns sanitized HTTP 503, without a connection string or raw error. The existing 404 handler is retained.
+Both `/` and `/api/health` return `{ "status": "OK", "service": "Studio Management API" }`. `/` is a liveness route; `/api/health` checks PostgreSQL and the required payment ledger schema. Database failure or a missing ledger migration returns sanitized HTTP 503, without a connection string or raw error. Apply approved production migrations before deploying the new backend so Render's readiness check can pass. The existing 404 handler is retained.
 
 ### Existing Vercel project
 
@@ -237,7 +238,7 @@ To preserve the instruction to keep `vercel.json` out of Git, the tracked `front
 | Output Directory | Leave unset/default; Vercel consumes `.vercel/output` |
 | VITE_API_URL     | `https://studio-management-fv00.onrender.com`         |
 
-The build creates `.vercel/output/static` and `config.json` with an API forwarding route, static-asset handling, and an `/index.html` fallback for React Router. Frontend Axios calls go directly to the configured Render URL; the generated proxy also supports deliberate same-origin `/api/*` requests. API paths are processed before the SPA fallback, so backend JSON errors never become an HTML success page. The normal `npm run build` still produces `dist` for other static hosts; it does not install Vercel routing. Do not override the generated artifact with a conflicting local `vercel.json`. Vercel build artifacts and all environment files remain ignored.
+The build creates `.vercel/output/static` and `config.json` with an API forwarding route, static-asset handling, and an `/index.html` fallback for React Router. Frontend Axios calls go directly to the configured Render URL; the generated proxy also supports deliberate same-origin `/api/*` requests. API paths are processed before the SPA fallback, so backend JSON errors never become an HTML success page. The normal `npm run build` now also emits this routing automatically when Vercel sets `VERCEL=1`; outside Vercel it produces the normal `dist`. The explicit `build:vercel` command remains available. Do not override the generated artifact with a conflicting local `vercel.json`. Vercel build artifacts and all environment files remain ignored.
 
 ### Validation and troubleshooting
 
@@ -253,3 +254,99 @@ Invoke-WebRequest https://studio-management-sandy.vercel.app/customers -UseBasic
 Inspect browser Network requests: login/setup/data requests should target `https://studio-management-fv00.onrender.com/api/...`, never `/api/api/...`. OPTIONS should return the exact deployed Vercel origin in Access-Control-Allow-Origin. If root is OK but health is 503, investigate database URL/CA/schema. If CORS still allows localhost, update Render's environment and redeploy. If frontend requests still use the Vercel host accidentally, verify VITE_API_URL was set before the build. If a React Router refresh returns 404, verify Build Output API settings. A Render cold start may take time; the client allows 60 seconds and reports a retryable timeout.
 
 Automated coverage includes API URL normalization, production origin/port/proxy validation, Supabase-only startup settings, root/health/404 responses, allowed and blocked preflight, sanitized database failure, and browser flows using an API on a separate origin. Integration tests require a local `DATABASE_URL` and a test JWT secret, and use disposable schemas. No hosted migration, Git push or cloud redeployment is implied by a successful local test.
+
+## Password recovery, payment reversals, backups and performance
+
+### Administrator password resets
+
+Users includes Reset password for other active accounts. The administrator must confirm their own current password. The API locks both account rows, generates a unique temporary password, revokes existing sessions by incrementing password_version, forces a first-login password change, and records actor/target/time in audit_logs. The temporary password is shown once with no-store caching. Staff cannot reset passwords, and administrators cannot use this route on themselves. Enable a disabled account before resetting it. Endpoint: `POST /api/users/:id/reset-password` with `current_password`.
+
+### Full and partial payment reversals
+
+Migration `002_payment_reversals` adds an append-only `payment_reversals` table and signed `payment_ledger` view. Existing payments are not edited or deleted. Payments → Reverse / history accepts an amount, date, reason and a UUID submission key. The date must be between the original payment date and today's India calendar date. Booking/payment row locks prevent concurrent reversals or new payments from producing inconsistent balances. Total reversals cannot exceed the original amount; identical retries return the original reversal, and mismatched reuse of a key is rejected.
+
+Net receipts are original payments minus reversals. Outstanding balances, invoice paid/balance fields, dashboard, customer history, payment validation and cash reports all use this ledger. A reversal is a cash reduction, not an additional expense. Daily/monthly/yearly receipts can therefore be negative in a period with refunds. Receipt reports include `entry_type` and `payment_id`; negative IDs identify reversal entries. Original receipt PDFs retain their PAY number and original amount, and additionally show reversed amounts/current net totals. Reversal history retains its reason, amount, date and administrator identity. Original invoice snapshots and original payment amounts remain intact.
+
+Endpoints: `GET /api/payments/:id/reversals`, and `POST /api/payments/:id/reversals` with `date`, `amount`, `reason`, `idempotency_key`. Both require admin access. The payment list adds reversed_amount and net_amount while retaining its original amount field.
+
+For local upgrades run `npm run db:migrate -w backend`; the runner backs up first and applies only missing migrations. Fresh installations can use the regenerated `backend/database/install_all.sql` (22 tables plus the ledger view). Existing hosted installations require an approved backup and review of `backend/database/upgrade_002_payment_reversals.sql` before deploying code that uses the ledger. That single-transaction upgrade file refuses an already-applied migration; it has not been executed against Supabase. Do not use the fresh installer on an existing schema.
+
+### Verified backup recovery and scheduling
+
+```powershell
+npm run db:verify-backup -w backend
+# Preview the daily task without registering it:
+powershell -NoProfile -File backend/scripts/install-backup-task.ps1 -Time '03:00'
+# Register only after choosing the schedule:
+powershell -NoProfile -File backend/scripts/install-backup-task.ps1 -Time '03:00' -Install
+Get-ScheduledTaskInfo -TaskName StudioManagementLocalBackup
+```
+
+Restore verification creates a new snapshot-consistent backup, checks its checksum, restores it into a uniquely named disposable local database, verifies every application table count and validated constraints, then removes only that test database. It never restores over the source database. The account needs local CREATE DATABASE privileges. The task runs as the signed-in Windows user at the chosen local time, uses the ignored backend/.env, stores no password in its task definition, and does not run while that user is signed out. No task is registered by ordinary application startup. Backups are retained; monitor storage and restrict backup-folder access. Cloud backups need a separate off-machine retention/recovery policy; this local task does not provide that.
+
+### Bundle size and deployment checks
+
+Recharts is loaded only when the dashboard chart is needed. Invoice/equipment pages are separate lazy chunks and keep the existing UI. Shared document/PDF controls are extracted into components/DocumentTools.jsx. The entry bundle dropped from roughly 765 KB to roughly 371 KB; the chart bundle is about 379 KB and loads separately. Numbers are uncompressed and can vary with subsequent builds.
+
+```powershell
+npm run verify:deployment -w backend -- --frontend https://studio-management-sandy.vercel.app --backend https://studio-management-fv00.onrender.com
+npm run security:git -w backend
+```
+
+The deployment checker makes only read-only public requests: root/health, API forwarding, client route refresh, and preflight. The Git audit prints file paths/counts only and exits nonzero if sensitive paths are currently tracked or exist in prior commits; it never prints their contents or modifies history.
+
+The audit found no currently tracked environment files/backups, but six commits still reference historical environment/backup paths. Removing these from shared history requires a coordinated rewrite and updated clones. Before approving that work: preserve a private repository backup, choose the affected branches/tags, rotate any credentials exposed by pushed history, clean an isolated mirror, verify its audit, and review an explicit force-with-lease push plan. No shared history is rewritten or force-pushed by these changes. Production secrets remain managed in Render/Vercel rather than source files.
+
+## Payment receipts with discounts
+
+Bookings now accept Total booking amount, discount type (NONE, PERCENTAGE or FIXED) and discount value. The agreed amount remains the final amount after discount. The backend uses decimal arithmetic with half-up rounding to paise; the frontend uses integer paise for its preview. For example, total 50,000 minus 10% (5,000) gives agreed amount 45,000; previous receipts 5,000 plus current payment 10,000 leave 30,000 due. Discounts above the total, negative amounts and overpayments are rejected. A Final payment must settle the outstanding balance.
+
+Payments ? Save receipt saves one real payment with a unique REC-year sequence number and an immutable receipt snapshot in the same transaction. Advance, Partial and Final are supported alongside legacy payment types; Cash, UPI, Card, Bank transfer and existing Cheque remain supported. Submission keys prevent duplicate payments. Existing PAY numbers stay unchanged. Payment search also accepts receipt numbers.
+
+View receipt, Download PDF and the preview's print action use the saved payment; they never create another payment. The A4 PDF includes studio branding, customer/event/package details, gross/discount/net totals, previous/current payments, balance, amount in words, reference, remarks and an authorized-signatory section. Long content continues on an appendix page. Settings accepts PNG/JPEG logos up to 100 KB and 2048 pixels, with optional tagline, signatory and footer. The default camera mark works without an uploaded logo.
+
+Issued receipts preserve the original booking, customer, studio, logo and financial details. Later reversals appear as current reversal information without rewriting the issued balance. Historical payments lacking a snapshot are reconstructed from available records on first receipt access and clearly labeled; unavailable historical settings cannot be recovered. No separate receipt transaction table is created.
+
+### Migration and API
+
+Migration source: `backend/database/migrations/003_receipt_design.up.sql`; rollback source has the matching `.down.sql` suffix. It extends bookings, payments and studio settings, adds a receipt counter and deduplicated logo assets, and protects issued payment snapshots. Existing bookings get no discount; old payment amounts and numbers are preserved. Rollback refuses to discard receipt/discount/branding data.
+
+The approved migration was tested in disposable local schemas, then applied to the local database after a verified backup. **Supabase has not been migrated.** For an existing hosted installation, review and approve a production backup and migration first. Run `upgrade_002_payment_reversals.sql` if absent, then `backend/database/upgrade_003_receipt_design.sql` against the correct database in the SQL editor. These upgrade files refuse repeat execution. Database selection happens in the connection/SQL editor, while the scripts use the `studio` schema. Use `install_all.sql` only for an empty installation.
+
+Existing authenticated admin routes are reused:
+
+- `POST /api/payments`: saves payment and snapshot; accepts payment_type plus the existing payment fields/idempotency key.
+- `GET /api/payments/:id/receipt`: receipt metadata, excluding binary logo bytes.
+- `GET /api/payments/:id/receipt/pdf`: saved A4 receipt PDF.
+- Existing booking create/update routes accept total_amount, discount_type and discount_value.
+- Existing settings GET/PUT routes include receipt branding and logo_data_url.
+
+Readiness `/api/health` checks the ledger and receipt schema; deploy the backend only after the approved migration is applied. It returns sanitized 503 when required database objects are missing.
+
+### Local verification and release
+
+```powershell
+npm test -w backend
+npm run verify:receipts -w backend
+npm run verify -w backend
+npm run verify:features -w backend
+npm run verify:browser -w backend
+npm run build -w frontend
+npm run dev
+```
+
+Tests use disposable schemas for database/API/browser checks. Receipt coverage includes no/percentage/fixed discount, rounding, advance/partial/final payments, zero balance, invalid values, concurrent numbering, duplicate submissions, immutable snapshots, reversals, historical receipts and PDF output. Browser checks cover receipt preview/download and existing desktop/mobile modules. The fixture PDF is generated locally at ignored `test-results/receipt-reference.pdf`.
+
+Review the complete diff before staging because this workspace also includes the earlier reversal, backup and deployment changes. Suggested commands (not executed):
+
+```powershell
+git diff --check
+git diff --stat
+git add README.md backend frontend
+git diff --cached --name-only
+# Confirm no environment files, backups or vercel.json appear before committing.
+git commit -m "Add payment receipts with discounts and preserved receipt details"
+git push origin HEAD
+```
+
+After explicit production approval: verify a production backup, apply the reviewed upgrades to Supabase, then deploy Render with its existing verified TLS/database/CORS environment. Confirm Render `/api/health` is OK before redeploying Vercel. Keep VITE_API_URL set to the Render origin and use the Vercel build settings above. Smoke-test login, discounted booking, a saved payment and receipt preview/download/print. No Git push, Render/Vercel deployment or production migration was performed for this implementation.

@@ -41,39 +41,57 @@ export async function migrate(client, schema = "studio", down = false) {
     await client.query(
       "CREATE TABLE IF NOT EXISTS schema_migrations(version TEXT PRIMARY KEY,applied_at TIMESTAMPTZ NOT NULL DEFAULT now())",
     );
-    const version = "001_invoices_equipment";
-    const exists = (
-      await client.query("SELECT 1 FROM schema_migrations WHERE version=$1", [
-        version,
-      ])
-    ).rowCount;
-    if (down && exists) {
-      const { rows } = await client.query(
-        "SELECT (SELECT count(*) FROM invoices)+(SELECT count(*) FROM equipment)+(SELECT count(*) FROM equipment_assignments)+(SELECT count(*) FROM equipment_maintenance) AS records",
+    const versions = [
+      "001_invoices_equipment",
+      "002_payment_reversals",
+      "003_receipt_design",
+    ];
+    const applied = new Set(
+      (await client.query("SELECT version FROM schema_migrations")).rows.map(
+        (row) => row.version,
+      ),
+    );
+    const selected = down
+      ? versions.filter((version) => applied.has(version)).slice(-1)
+      : versions.filter((version) => !applied.has(version));
+    for (const version of selected) {
+      if (down) {
+        const financial = applied.has("002_payment_reversals")
+          ? " +(SELECT count(*) FROM payment_reversals)"
+          : "";
+        const records = (
+          await client.query(
+            "SELECT (SELECT count(*) FROM invoices)+(SELECT count(*) FROM equipment)+(SELECT count(*) FROM equipment_assignments)+(SELECT count(*) FROM equipment_maintenance)" +
+              financial +
+              (applied.has("003_receipt_design")
+                ? " +(SELECT count(*) FROM studio_brand_assets)+(SELECT count(*) FROM payments WHERE receipt_number IS NOT NULL OR receipt_snapshot IS NOT NULL OR method='Card')+(SELECT count(*) FROM bookings WHERE discount_amount<>0)"
+                : "") +
+              " AS records",
+          )
+        ).rows[0].records;
+        if (Number(records) > 0)
+          throw new Error(
+            "Rollback refused: feature or reversal records exist; preserve/export them before planning rollback",
+          );
+      }
+      await client.query(
+        await readFile(
+          new URL(
+            "./migrations/" + version + (down ? ".down.sql" : ".up.sql"),
+            import.meta.url,
+          ),
+          "utf8",
+        ),
       );
-      if (Number(rows[0].records) > 0)
-        throw new Error(
-          "Rollback refused: feature records exist; preserve/export them before planning rollback",
+      if (down)
+        await client.query("DELETE FROM schema_migrations WHERE version=$1", [
+          version,
+        ]);
+      else
+        await client.query(
+          "INSERT INTO schema_migrations(version) VALUES($1)",
+          [version],
         );
-      await client.query(
-        await readFile(
-          new URL(`./migrations/${version}.down.sql`, import.meta.url),
-          "utf8",
-        ),
-      );
-      await client.query("DELETE FROM schema_migrations WHERE version=$1", [
-        version,
-      ]);
-    } else if (!down && !exists) {
-      await client.query(
-        await readFile(
-          new URL(`./migrations/${version}.up.sql`, import.meta.url),
-          "utf8",
-        ),
-      );
-      await client.query("INSERT INTO schema_migrations(version) VALUES($1)", [
-        version,
-      ]);
     }
     if (JSON.stringify(before) !== JSON.stringify(await counts()))
       throw new Error("Existing row counts changed; migration rolled back");

@@ -8,6 +8,7 @@
     "start:supabase": "node scripts/start-supabase.js",
     "db:init": "node database/init.js",
     "db:backup": "node scripts/backup.js",
+    "db:verify-backup": "node scripts/verify-backup-restore.js",
     "db:migrate": "node database/migrate.js",
     "db:rollback": "node database/migrate.js --down",
     "cloud:verify": "node scripts/verify-cloud.js",
@@ -15,6 +16,9 @@
     "test": "node --test",
     "verify": "node scripts/verify.js",
     "verify:features": "node scripts/verify-features.js",
+    "verify:receipts": "node scripts/verify-receipts.js",
+    "verify:deployment": "node scripts/check-deployment.js",
+    "security:git": "node scripts/audit-git-secrets.js",
     "verify:browser": "node scripts/browser-verify.js"
   },
   "dependencies": {

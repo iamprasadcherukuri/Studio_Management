@@ -121,7 +121,7 @@ try {
   await call(
     `/bookings/${booking.id}`,
     "PUT",
-    { ...booking, agreed_amount: 101, staff_ids: [] },
+    { ...booking, agreed_amount: 101,total_amount:101, staff_ids: [] },
     409,
   );
   assert.equal(Number((await call("/dashboard")).metrics.received), 0);
@@ -281,6 +281,110 @@ try {
   assert.equal(summary.total_equipment, 1);
   assert.equal(summary.invoice_outstanding, "60.00");
   assert.equal(Number((await call("/dashboard")).metrics.received), 40.01);
+  const reversalInput = {
+    date: today,
+    amount: "10.01",
+    reason: "Partial payment correction",
+    idempotency_key: randomUUID(),
+  };
+  const reversal = await call(
+    `/payments/${payment.id}/reversals`,
+    "POST",
+    reversalInput,
+    201,
+  );
+  assert.equal(
+    (
+      await call(
+        `/payments/${payment.id}/reversals`,
+        "POST",
+        reversalInput,
+        201,
+      )
+    ).id,
+    reversal.id,
+  );
+  await call(
+    `/payments/${payment.id}/reversals`,
+    "POST",
+    { ...reversalInput, amount: "10.02" },
+    409,
+  );
+  await call(
+    `/payments/${payment.id}/reversals`,
+    "POST",
+    { ...reversalInput, amount: "31", idempotency_key: randomUUID() },
+    409,
+  );
+  await call(
+    `/payments/${payment.id}/reversals`,
+    "POST",
+    { ...reversalInput, amount: "0", idempotency_key: randomUUID() },
+    400,
+  );
+  await call(
+    `/payments/${payment.id}/reversals`,
+    "POST",
+    { ...reversalInput, date: "2099-01-01", idempotency_key: randomUUID() },
+    400,
+  );
+  assert.equal(
+    (await call("/invoices/" + replacement.id)).balance_amount,
+    "70.01",
+  );
+  const reversalResponses = await Promise.all(
+    [1, 2].map(() =>
+      fetch(base + `/payments/${payment.id}/reversals`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ...reversalInput,
+          amount: "20",
+          idempotency_key: randomUUID(),
+        }),
+      }),
+    ),
+  );
+  assert.deepEqual(
+    reversalResponses.map((response) => response.status).sort(),
+    [201, 409],
+  );
+  await call(
+    `/payments/${payment.id}/reversals`,
+    "POST",
+    {
+      ...reversalInput,
+      amount: "10",
+      reason: "Complete remaining reversal",
+      idempotency_key: randomUUID(),
+    },
+    201,
+  );
+  const original = (await call("/payments")).data.find(
+    (row) => row.id === payment.id,
+  );
+  assert.equal(original.amount, "40.01");
+  assert.equal(original.reversed_amount, "40.01");
+  assert.equal(original.net_amount, "0.00");
+  assert.equal(Number((await call("/dashboard")).metrics.received), 0);
+  assert.equal(
+    (await call("/invoices/" + replacement.id)).balance_amount,
+    "100.01",
+  );
+  const cashRows = (
+    await call(`/reports?type=receipts&from=${today}&to=${today}`)
+  ).data;
+  assert.equal(
+    cashRows.filter((row) => row.entry_type === "Reversal").length,
+    3,
+  );
+  assert.equal(
+    cashRows.reduce((sum, row) => sum + Number(row.amount), 0),
+    0,
+  );
   const staff = await call(
     "/users",
     "POST",
@@ -312,6 +416,7 @@ try {
     "/equipment",
     "/equipment-assignments",
     "/equipment-maintenance",
+    `/payments/${payment.id}/reversals`,
     `/payments/${payment.id}/receipt/pdf`,
   ])
     await call(path, "GET", undefined, 403, staffToken);

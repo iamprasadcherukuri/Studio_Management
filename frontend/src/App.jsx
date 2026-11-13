@@ -32,22 +32,23 @@ import {
   Moon,
   Sun,
 } from "lucide-react";
-import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-} from "recharts";
+
 import { api, message } from "./services/api";
-import {
-  InvoicesPage,
-  EquipmentPage,
-  FeatureSummary,
-  ReceiptPdfButton,
-} from "./pages/Enhancements";
+import { csvCell } from "./services/csv";
+import { previewBookingPrice } from "./services/booking-pricing";
+import { FeatureSummary, ReceiptPdfButton } from "./components/DocumentTools";
+const InvoicesPage = React.lazy(() =>
+  import("./pages/Enhancements").then((module) => ({
+    default: module.InvoicesPage,
+  })),
+);
+const EquipmentPage = React.lazy(() =>
+  import("./pages/Enhancements").then((module) => ({
+    default: module.EquipmentPage,
+  })),
+);
+const RevenueChart = React.lazy(() => import("./components/RevenueChart"));
+
 const money = (n) =>
   new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -125,7 +126,16 @@ const columns = {
     "outstanding",
     "status",
   ],
-  payments: ["customer_name", "booking_id", "date", "amount", "method"],
+  payments: [
+    "receipt_number",
+    "customer_name",
+    "booking_id",
+    "date",
+    "amount",
+    "reversed_amount",
+    "net_amount",
+    "method",
+  ],
   albums: [
     "customer_name",
     "album_type",
@@ -153,7 +163,10 @@ const fields = {
     ["event_date", "Event date", "date"],
     ["location", "Event location"],
     ["package_id", "Package", "packages", false],
-    ["agreed_amount", "Agreed amount (₹)", "number"],
+    ["total_amount", "Total booking amount (₹)", "number"],
+    ["discount_type", "Discount type", ["NONE", "PERCENTAGE", "FIXED"]],
+    ["discount_value", "Discount value (% or ₹)", "number"],
+    ["agreed_amount", "Final agreed amount (₹)", "number"],
     [
       "status",
       "Status",
@@ -166,7 +179,12 @@ const fields = {
     ["booking_id", "Booking", "bookings"],
     ["date", "Payment date", "date"],
     ["amount", "Amount (₹)", "number"],
-    ["method", "Payment method", methods],
+    ["method", "Payment method", [...methods, "Card"]],
+    [
+      "payment_type",
+      "Payment type",
+      ["Advance", "Partial", "Final", "Payment", "Installment"],
+    ],
     ["reference", "Transaction / cheque reference", "text", false],
     ["remarks", "Remarks", "textarea", false],
   ],
@@ -220,6 +238,10 @@ const fields = {
     ["phone", "Phone", "text", false],
     ["email", "Email", "email", false],
     ["address", "Studio address", "textarea", false],
+    ["tagline", "Receipt tagline", "text", false],
+    ["signatory_name", "Authorized signatory name", "text", false],
+    ["signatory_title", "Signatory title", "text", false],
+    ["receipt_footer", "Receipt footer message", "textarea", false],
   ],
 };
 function Badge({ children }) {
@@ -273,6 +295,7 @@ function FormFields({
           id: key,
           name: key,
           required,
+          readOnly: kind === "bookings" && key === "agreed_amount",
           value: value[key] ?? "",
           onChange: (e) => {
             const next = { ...value, [key]: e.target.value };
@@ -280,9 +303,21 @@ function FormFields({
               const p = lookups.packages?.find(
                 (p) => String(p.id) === e.target.value,
               );
-              if (p) next.agreed_amount = p.amount;
+              if (p) next.total_amount = p.amount;
             }
-            setValue(next);
+            if (
+              kind === "bookings" &&
+              [
+                "package_id",
+                "total_amount",
+                "discount_type",
+                "discount_value",
+              ].includes(key)
+            ) {
+              if (key === "discount_type" && next.discount_type === "NONE")
+                next.discount_value = "0";
+              setValue(previewBookingPrice(next));
+            } else setValue(next);
           },
         };
         return (
@@ -659,13 +694,21 @@ function FirstLoginPassword({ user, onDone }) {
   );
 }
 export default function App() {
-  const [theme,setTheme]=useState(()=>{
-    try{return localStorage.getItem('studio-theme')==='dark'?'dark':'light';}catch{return 'light';}
+  const [theme, setTheme] = useState(() => {
+    try {
+      return localStorage.getItem("studio-theme") === "dark" ? "dark" : "light";
+    } catch {
+      return "light";
+    }
   });
-  useEffect(()=>{
-    document.documentElement.dataset.theme=theme;
-    try{localStorage.setItem('studio-theme',theme);}catch{/* Theme still works when browser storage is unavailable. */}
-  },[theme]);
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem("studio-theme", theme);
+    } catch {
+      /* Theme still works when browser storage is unavailable. */
+    }
+  }, [theme]);
   const [user, setUser] = useState(null),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
@@ -781,63 +824,81 @@ export default function App() {
             <span className="studio-name">{settings.name}</span>
             <button
               className="theme-toggle"
-              aria-label={theme==='dark'?'Switch to light mode':'Switch to dark mode'}
-              aria-pressed={theme==='dark'}
-              title={theme==='dark'?'Switch to light mode':'Switch to dark mode'}
-              onClick={()=>setTheme(current=>current==='dark'?'light':'dark')}
+              aria-label={
+                theme === "dark"
+                  ? "Switch to light mode"
+                  : "Switch to dark mode"
+              }
+              aria-pressed={theme === "dark"}
+              title={
+                theme === "dark"
+                  ? "Switch to light mode"
+                  : "Switch to dark mode"
+              }
+              onClick={() =>
+                setTheme((current) => (current === "dark" ? "light" : "dark"))
+              }
             >
-              {theme==='dark'?<Sun size={19} aria-hidden="true"/>:<Moon size={19} aria-hidden="true"/>}
+              {theme === "dark" ? (
+                <Sun size={19} aria-hidden="true" />
+              ) : (
+                <Moon size={19} aria-hidden="true" />
+              )}
             </button>
           </div>
         </header>
         <main className="content">
           <ErrorBox error={error} />
-          <Routes>
-            <Route path="/" element={<Dashboard user={user} />} />
-            {[
-              "customers",
-              "bookings",
-              "albums",
-              ...(isAdmin ? ["payments", "expenses", "users"] : []),
-            ].map((kind) => (
-              <Route
-                key={kind}
-                path={"/" + kind}
-                element={
-                  <Records
-                    key={kind}
-                    kind={kind}
-                    user={user}
-                    settings={settings}
-                  />
-                }
-              />
-            ))}
-            {isAdmin && (
-              <>
+          <React.Suspense
+            fallback={<div className="loading">Loading page?</div>}
+          >
+            <Routes>
+              <Route path="/" element={<Dashboard user={user} />} />
+              {[
+                "customers",
+                "bookings",
+                "albums",
+                ...(isAdmin ? ["payments", "expenses", "users"] : []),
+              ].map((kind) => (
                 <Route
-                  path="/invoices"
-                  element={<InvoicesPage ui={featureUi} />}
-                />
-                <Route
-                  path="/equipment"
-                  element={<EquipmentPage ui={featureUi} />}
-                />
-                <Route path="/reports" element={<Reports />} />
-                <Route
-                  path="/settings"
+                  key={kind}
+                  path={"/" + kind}
                   element={
-                    <StudioSettings
-                      settings={settings}
-                      onSave={setSettings}
+                    <Records
+                      key={kind}
+                      kind={kind}
                       user={user}
+                      settings={settings}
                     />
                   }
                 />
-              </>
-            )}
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+              ))}
+              {isAdmin && (
+                <>
+                  <Route
+                    path="/invoices"
+                    element={<InvoicesPage ui={featureUi} />}
+                  />
+                  <Route
+                    path="/equipment"
+                    element={<EquipmentPage ui={featureUi} />}
+                  />
+                  <Route path="/reports" element={<Reports />} />
+                  <Route
+                    path="/settings"
+                    element={
+                      <StudioSettings
+                        settings={settings}
+                        onSave={setSettings}
+                        user={user}
+                      />
+                    }
+                  />
+                </>
+              )}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </React.Suspense>
           <footer className="page-footer">
             <span>{settings.name}</span>
             <span>Made for moments. Built for your business.</span>
@@ -903,7 +964,7 @@ function Dashboard({ user }) {
       "Payments received",
       money(m.received),
       Wallet,
-      "Recorded offline receipts",
+      "Net receipts after reversals",
     ],
     [
       "Pending payments",
@@ -966,52 +1027,11 @@ function Dashboard({ user }) {
             </span>
           </div>
           <div className="chart">
-            <ResponsiveContainer width="100%" height={245}>
-              <BarChart
-                data={data.months.map((x) => ({
-                  ...x,
-                  revenue: Number(x.revenue),
-                  expenses: Number(x.expenses),
-                }))}
-                barGap={5}
-              >
-                <CartesianGrid
-                  strokeDasharray="3 4"
-                  vertical={false}
-                  stroke="#edf1f7"
-                />
-                <XAxis
-                  dataKey="month"
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fill: "#8993a6", fontSize: 12 }}
-                />
-                <YAxis
-                  tickFormatter={(n) => (n >= 1000 ? `${n / 1000}k` : n)}
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fill: "#8993a6", fontSize: 11 }}
-                />
-                <Tooltip
-                  formatter={(v) => money(v)}
-                  cursor={{ fill: "#f5f8fc" }}
-                />
-                <Bar
-                  dataKey="revenue"
-                  name="Received"
-                  fill="#528af3"
-                  radius={[5, 5, 0, 0]}
-                  maxBarSize={24}
-                />
-                <Bar
-                  dataKey="expenses"
-                  name="Expenses"
-                  fill="#cdddf8"
-                  radius={[5, 5, 0, 0]}
-                  maxBarSize={24}
-                />
-              </BarChart>
-            </ResponsiveContainer>
+            <React.Suspense
+              fallback={<div className="loading">Loading chart?</div>}
+            >
+              <RevenueChart months={data.months} />
+            </React.Suspense>
           </div>
           <div className="chart-bottom">
             <span>
@@ -1168,6 +1188,8 @@ function cell(key, value) {
       "received",
       "booked_amount",
       "receipts",
+      "reversed_amount",
+      "net_amount",
       "total_amount",
       "paid_amount",
       "balance_amount",
@@ -1244,6 +1266,11 @@ function Records({ kind, user, settings, embedded = false }) {
     [lookups, setLookups] = useState({}),
     [detail, setDetail] = useState(null),
     [credentials, setCredentials] = useState(null),
+    [resetting, setResetting] = useState(null),
+    [adminPassword, setAdminPassword] = useState(""),
+    [reversing, setReversing] = useState(null),
+    [reversalForm, setReversalForm] = useState({}),
+    [reversalRows, setReversalRows] = useState([]),
     [confirm, setConfirm] = useState(null);
   const title = kind[0].toUpperCase() + kind.slice(1);
   const singular = {
@@ -1309,6 +1336,11 @@ function Records({ kind, user, settings, embedded = false }) {
             printing_cost: 0,
             role: "staff",
             idempotency_key: crypto.randomUUID(),
+            payment_type: "Advance",
+            total_amount: "",
+            discount_type: "NONE",
+            discount_value: "0",
+            discount_amount: 0,
             staff_ids: [],
           },
     );
@@ -1325,14 +1357,18 @@ function Records({ kind, user, settings, embedded = false }) {
     setSaving(true);
     setError("");
     try {
+      let receiptNumber;
       if (editing.id) await api.put(`/${kind}/${editing.id}`, value);
       else {
         const { data } = await api.post("/" + kind, value);
         if (kind === "users") setCredentials(data);
+        if (kind === "payments") receiptNumber = data.receipt_number;
       }
       setEditing(null);
       setNotice(
-        `${singular[0].toUpperCase() + singular.slice(1)} saved successfully.`,
+        receiptNumber
+          ? `Receipt ${receiptNumber} saved. Payment recorded once.`
+          : `${singular[0].toUpperCase() + singular.slice(1)} saved successfully.`,
       );
       load();
     } catch (e) {
@@ -1402,7 +1438,9 @@ function Records({ kind, user, settings, embedded = false }) {
           </button>
         </div>
       )}
-      {editing === null && <ErrorBox error={error} />}{" "}
+      {editing === null && !resetting && !reversing && (
+        <ErrorBox error={error} />
+      )}{" "}
       {notice && (
         <div className="notice success" role="status">
           <Check size={17} />
@@ -1488,32 +1526,67 @@ function Records({ kind, user, settings, embedded = false }) {
                 )}
                 {kind === "payments" ? (
                   <>
-                    <ReceiptPdfButton payment={r} ui={featureUi} />
                     <button
-                      className="icon-button"
-                      aria-label="View receipt"
-                      onClick={() => setDetail({ receipt: r })}
+                      className="text-link"
+                      onClick={async () => {
+                        setError("");
+                        try {
+                          const { data } = await api.get(
+                            `/payments/${r.id}/reversals`,
+                          );
+                          setReversalRows(data.data);
+                          setReversalForm({
+                            date: today(),
+                            amount: r.net_amount,
+                            reason: "",
+                            idempotency_key: crypto.randomUUID(),
+                          });
+                          setReversing(r);
+                        } catch (error) {
+                          setError(message(error));
+                        }
+                      }}
                     >
-                      <Printer size={16} />
+                      Reverse / history
                     </button>
+                    <ReceiptPdfButton payment={r} ui={featureUi} />
+                    <ReceiptPdfButton
+                      payment={r}
+                      ui={featureUi}
+                      label="View receipt"
+                      printIcon
+                    />
                   </>
                 ) : kind === "users" ? (
-                  <button
-                    className="text-link"
-                    disabled={r.id === user.id}
-                    onClick={async () => {
-                      try {
-                        await api.patch(`/users/${r.id}`, {
-                          active: !r.active,
-                        });
-                        load();
-                      } catch (e) {
-                        setError(message(e));
-                      }
-                    }}
-                  >
-                    {r.active ? "Disable" : "Enable"}
-                  </button>
+                  <>
+                    <button
+                      className="text-link"
+                      disabled={r.id === user.id || !r.active}
+                      onClick={() => {
+                        setResetting(r);
+                        setAdminPassword("");
+                        setError("");
+                      }}
+                    >
+                      Reset password
+                    </button>
+                    <button
+                      className="text-link"
+                      disabled={r.id === user.id}
+                      onClick={async () => {
+                        try {
+                          await api.patch(`/users/${r.id}`, {
+                            active: !r.active,
+                          });
+                          load();
+                        } catch (e) {
+                          setError(message(e));
+                        }
+                      }}
+                    >
+                      {r.active ? "Disable" : "Enable"}
+                    </button>
+                  </>
                 ) : (
                   <button
                     className="icon-button"
@@ -1599,7 +1672,9 @@ function Records({ kind, user, settings, embedded = false }) {
             {kind === "bookings" && (
               <p className="help-text">
                 Record advances separately in Payments after saving this
-                booking.
+                booking. Enter the original total and choose a percentage or
+                fixed discount. The final agreed amount is calculated once and
+                remains the booking's payment limit.
               </p>
             )}
             <div className="modal-footer">
@@ -1614,14 +1689,141 @@ function Records({ kind, user, settings, embedded = false }) {
                 Cancel
               </button>
               <button className="primary" disabled={saving}>
-                {saving ? "Saving…" : `Save ${singular}`}
+                {saving
+                  ? "Saving…"
+                  : kind === "payments"
+                    ? "Save receipt"
+                    : `Save ${singular}`}
               </button>
             </div>
           </form>
         </Modal>
       )}
+      {reversing && (
+        <Modal
+          title="Payment reversals"
+          close={() => {
+            if (!saving) {
+              setReversing(null);
+              setError("");
+            }
+          }}
+        >
+          <ErrorBox error={error} />
+          <p>
+            Payment #{reversing.id}: original {money(reversing.amount)},
+            reversed {money(reversing.reversed_amount)}, remaining{" "}
+            {money(reversing.net_amount)}.
+          </p>
+          <p className="help-text">
+            A reversal records money refunded or an incorrect receipt removed.
+            It reduces net receipts and restores the booking balance. The
+            original payment remains unchanged.
+          </p>
+          {Number(reversing.net_amount) > 0 && (
+            <form
+              onSubmit={async (event) => {
+                event.preventDefault();
+                if (saving) return;
+                setSaving(true);
+                setError("");
+                try {
+                  await api.post(
+                    `/payments/${reversing.id}/reversals`,
+                    reversalForm,
+                  );
+                  setReversing(null);
+                  setNotice(
+                    "Payment reversal recorded. Net receipts and outstanding balances are updated.",
+                  );
+                  load();
+                } catch (error) {
+                  setError(message(error));
+                } finally {
+                  setSaving(false);
+                }
+              }}
+            >
+              <div className="form-grid feature-section-title">
+                <label>
+                  Reversal date
+                  <input
+                    type="date"
+                    required
+                    min={String(reversing.date).slice(0, 10)}
+                    max={today()}
+                    value={reversalForm.date}
+                    onChange={(event) =>
+                      setReversalForm({
+                        ...reversalForm,
+                        date: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Reversal amount (₹)
+                  <input
+                    type="number"
+                    required
+                    min="0.01"
+                    max={reversing.net_amount}
+                    step="0.01"
+                    value={reversalForm.amount}
+                    onChange={(event) =>
+                      setReversalForm({
+                        ...reversalForm,
+                        amount: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+                <label className="wide">
+                  Reason
+                  <textarea
+                    required
+                    minLength={3}
+                    maxLength={1000}
+                    value={reversalForm.reason}
+                    onChange={(event) =>
+                      setReversalForm({
+                        ...reversalForm,
+                        reason: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => setReversing(null)}
+                >
+                  Cancel
+                </button>
+                <button className="danger-button" disabled={saving}>
+                  {saving ? "Recording…" : "Confirm reversal"}
+                </button>
+              </div>
+            </form>
+          )}
+          <h3 className="feature-section-title">Reversal history</h3>
+          {reversalRows.length ? (
+            <Table
+              rows={reversalRows}
+              keys={["date", "amount", "reason", "created_by_name"]}
+            />
+          ) : (
+            <p className="help-text">No reversals recorded.</p>
+          )}
+        </Modal>
+      )}
       {credentials && (
-        <Modal title="User created" close={() => setCredentials(null)}>
+        <Modal
+          title={credentials.reset ? "Password reset" : "User created"}
+          close={() => setCredentials(null)}
+        >
           <p>
             Share these details securely with the user. They must change their
             password at first login.
@@ -1646,6 +1848,77 @@ function Records({ kind, user, settings, embedded = false }) {
               Done
             </button>
           </div>
+        </Modal>
+      )}
+      {resetting && (
+        <Modal
+          title="Reset user password?"
+          close={() => {
+            if (!saving) {
+              setResetting(null);
+              setAdminPassword("");
+              setError("");
+            }
+          }}
+        >
+          <form
+            onSubmit={async (event) => {
+              event.preventDefault();
+              if (saving) return;
+              setSaving(true);
+              setError("");
+              try {
+                const { data } = await api.post(
+                  `/users/${resetting.id}/reset-password`,
+                  { current_password: adminPassword },
+                );
+                setResetting(null);
+                setAdminPassword("");
+                setCredentials(data);
+                setNotice(
+                  "Password reset. Previous sessions are revoked and a password change is required.",
+                );
+                load();
+              } catch (error) {
+                setError(message(error));
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            <ErrorBox error={error} />
+            <p>
+              Reset the password for {resetting.name} ({resetting.email})? Their
+              active sessions will end. Share the new temporary password
+              securely.
+            </p>
+            <label className="feature-section-title">
+              Your administrator password
+              <input
+                required
+                type="password"
+                autoComplete="current-password"
+                maxLength={72}
+                value={adminPassword}
+                onChange={(event) => setAdminPassword(event.target.value)}
+              />
+            </label>
+            <div className="modal-footer">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => {
+                  setResetting(null);
+                  setAdminPassword("");
+                }}
+              >
+                Cancel
+              </button>
+              <button className="primary" disabled={saving}>
+                {saving ? "Resetting…" : "Confirm password reset"}
+              </button>
+            </div>
+          </form>
         </Modal>
       )}
       {confirm && (
@@ -1699,6 +1972,8 @@ function Records({ kind, user, settings, embedded = false }) {
                   ["Payment method", detail.receipt.method],
                   ["Reference", detail.receipt.reference || "—"],
                   ["Amount received", money(detail.receipt.amount)],
+                  ["Amount reversed", money(detail.receipt.reversed_amount)],
+                  ["Net retained", money(detail.receipt.net_amount)],
                   ["Remarks", detail.receipt.remarks || "—"],
                 ].map(([k, v]) => (
                   <div key={k}>
@@ -1774,11 +2049,7 @@ function Reports() {
   }, [type, from, to]);
   function exportCSV() {
     const keys = Object.keys(data[0]);
-    const escape = (v) => {
-      let s = String(v ?? "");
-      if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
-      return '"' + s.replaceAll('"', '""') + '"';
-    };
+    const escape = csvCell;
     const csv =
       "\uFEFF" +
       [keys, ...data.map((r) => keys.map((k) => r[k]))]
@@ -1931,6 +2202,54 @@ function StudioSettings({ settings, onSave, user }) {
           <ErrorBox error={error} />
           {notice && <div className="notice success">{notice}</div>}
           <FormFields kind="settings" value={value} setValue={setValue} />
+          <div className="feature-section-title">
+            <label>
+              Receipt studio logo (PNG/JPEG, up to 100 KB)
+              <input
+                type="file"
+                accept="image/png,image/jpeg"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (!file) return;
+                  if (
+                    file.size > 102400 ||
+                    !["image/png", "image/jpeg"].includes(file.type)
+                  ) {
+                    setError("Choose a PNG or JPEG logo up to 100 KB");
+                    event.target.value = "";
+                    return;
+                  }
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    setValue((current) => ({
+                      ...current,
+                      logo_data_url: String(reader.result),
+                    }));
+                    setError("");
+                  };
+                  reader.onerror = () =>
+                    setError("Unable to read the selected image");
+                  reader.readAsDataURL(file);
+                }}
+              />
+            </label>
+            {value.logo_data_url && (
+              <div className="receipt-logo-upload">
+                <img src={value.logo_data_url} alt="Studio receipt logo" />
+                <button
+                  type="button"
+                  onClick={() => setValue({ ...value, logo_data_url: null })}
+                >
+                  Remove logo
+                </button>
+              </div>
+            )}
+            <p className="help-text">
+              Logo dimensions must be at most 2048 × 2048. Existing issued
+              receipts retain their original branding. Signatory text appears
+              with a blank signature line.
+            </p>
+          </div>
           <div className="modal-footer">
             <button className="primary" disabled={busy}>
               {busy ? "Saving…" : "Save studio details"}

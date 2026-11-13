@@ -1,4 +1,7 @@
 import { transaction } from "../database/pool.js";
+import { recordReceipt } from "./receipt-snapshots.js";
+import { bookingPricing } from "./booking-pricing.js";
+import Decimal from "decimal.js";
 export const definitions = {
   customers: {
     table: "customers",
@@ -10,13 +13,14 @@ export const definitions = {
     search: "c.name || ' ' || t.location || ' ' || e.name",
     join: "JOIN customers c ON c.id=t.customer_id JOIN event_types e ON e.id=t.event_type_id LEFT JOIN packages p ON p.id=t.package_id",
     select:
-      "t.*,c.name AS customer_name,e.name AS event_type,p.name AS package_name,COALESCE((SELECT sum(amount) FROM payments WHERE booking_id=t.id),0) AS paid,t.agreed_amount-COALESCE((SELECT sum(amount) FROM payments WHERE booking_id=t.id),0) AS outstanding,ARRAY(SELECT staff_id FROM booking_staff WHERE booking_id=t.id) AS staff_ids",
+      "t.*,c.name AS customer_name,e.name AS event_type,p.name AS package_name,COALESCE((SELECT sum(amount) FROM payment_ledger WHERE booking_id=t.id),0) AS paid,t.agreed_amount-COALESCE((SELECT sum(amount) FROM payment_ledger WHERE booking_id=t.id),0) AS outstanding,ARRAY(SELECT staff_id FROM booking_staff WHERE booking_id=t.id) AS staff_ids",
   },
   payments: {
     table: "payments",
-    search: "c.name || ' ' || t.method || ' ' || coalesce(t.reference,'')",
+    search: "c.name || ' ' || t.method || ' ' || coalesce(t.reference,'') || ' ' || coalesce(t.receipt_number,'PAY-' || lpad(t.id::text,greatest(5,length(t.id::text)),'0'))",
     join: "JOIN bookings b ON b.id=t.booking_id JOIN customers c ON c.id=b.customer_id",
-    select: "t.*,c.name AS customer_name,b.agreed_amount",
+    select:
+      "t.*,COALESCE(t.receipt_number,'PAY-'||lpad(t.id::text,greatest(5,length(t.id::text)),'0')) AS receipt_number,c.name AS customer_name,b.agreed_amount,COALESCE((SELECT sum(amount) FROM payment_reversals WHERE payment_id=t.id),0)::numeric(12,2) AS reversed_amount,(t.amount-COALESCE((SELECT sum(amount) FROM payment_reversals WHERE payment_id=t.id),0))::numeric(12,2) AS net_amount",
   },
   albums: {
     table: "albums",
@@ -39,6 +43,19 @@ export async function writeRecord(kind, data, user, recordId) {
   return transaction(async (client) => {
     const table = definitions[kind].table;
     const { staff_ids, ...values } = data;
+    if (kind === "bookings") {
+      const old = recordId
+        ? (
+            await client.query(
+              "SELECT * FROM bookings WHERE id=$1 FOR UPDATE",
+              [recordId],
+            )
+          ).rows[0]
+        : null;
+      if (recordId && !old) throw fail("Record not found", 404);
+      Object.assign(values, bookingPricing(data, old));
+      delete values.total_amount;
+    }
     if (kind === "payments") {
       await client.query("SELECT id FROM bookings WHERE id=$1 FOR UPDATE", [
         data.booking_id,
@@ -62,6 +79,7 @@ export async function writeRecord(kind, data, user, recordId) {
           Number(old.amount) !== data.amount ||
           oldDate !== data.date ||
           old.method !== data.method ||
+          old.payment_type !== data.payment_type ||
           (old.reference || null) !== data.reference ||
           (old.remarks || null) !== data.remarks
         )
@@ -69,7 +87,7 @@ export async function writeRecord(kind, data, user, recordId) {
         return old;
       }
       const { rows } = await client.query(
-        "SELECT status,agreed_amount-COALESCE((SELECT sum(amount) FROM payments WHERE booking_id=b.id),0) AS due FROM bookings b WHERE id=$1",
+        "SELECT status,agreed_amount-COALESCE((SELECT sum(amount) FROM payment_ledger WHERE booking_id=b.id),0) AS due FROM bookings b WHERE id=$1",
         [data.booking_id],
       );
       if (!rows[0]) throw fail("Booking not found", 404);
@@ -77,6 +95,11 @@ export async function writeRecord(kind, data, user, recordId) {
         throw fail("Cannot receive payments for a cancelled booking");
       if (data.amount > Number(rows[0].due))
         throw fail("Payment exceeds the outstanding balance");
+      if (
+        data.payment_type === "Final" &&
+        !new Decimal(data.amount).eq(rows[0].due)
+      )
+        throw fail("A final payment must settle the outstanding balance");
       values.created_by = user.id;
     }
     if (kind === "bookings" && recordId) {
@@ -84,10 +107,10 @@ export async function writeRecord(kind, data, user, recordId) {
         recordId,
       ]);
       const { rows } = await client.query(
-        "SELECT COALESCE(sum(amount),0) AS paid FROM payments WHERE booking_id=$1",
+        "SELECT COALESCE(sum(amount),0) AS paid FROM payment_ledger WHERE booking_id=$1",
         [recordId],
       );
-      if (data.agreed_amount < Number(rows[0].paid))
+      if (Number(values.agreed_amount) < Number(rows[0].paid))
         throw fail("Agreed amount cannot be below payments already received");
       if (data.status === "cancelled" && Number(rows[0].paid) > 0)
         throw fail(
@@ -114,6 +137,7 @@ export async function writeRecord(kind, data, user, recordId) {
           [rows[0].id, staffId],
         );
     }
+    if (kind === "payments") await recordReceipt(client, rows[0].id, true);
     await client.query(
       "INSERT INTO audit_logs(user_id,action,entity,entity_id) VALUES($1,$2,$3,$4)",
       [user.id, recordId ? "update" : "create", kind, rows[0].id],

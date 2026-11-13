@@ -34,6 +34,13 @@ const optionalDate = z.preprocess(
   date.nullable(),
 );
 export const methods = ["Cash", "UPI", "Bank transfer", "Cheque"];
+export const paymentMethods = [
+  "Cash",
+  "UPI",
+  "Card",
+  "Bank transfer",
+  "Cheque",
+];
 export const stages = [
   "Pending",
   "Photo Selection",
@@ -64,7 +71,11 @@ export const schemas = {
     package_id: optionalId,
     event_date: date,
     location: text,
-    agreed_amount: money,
+    agreed_amount: money.optional(),
+    total_amount: money.optional(),
+    discount_type: z.enum(["NONE", "PERCENTAGE", "FIXED"]).optional(),
+    discount_value: money.optional(),
+    discount_amount: money.optional(),
     notes: optional,
     status: z.enum(["confirmed", "in progress", "completed", "cancelled"]),
     staff_ids: z.array(id).default([]),
@@ -73,7 +84,13 @@ export const schemas = {
     booking_id: id,
     date,
     amount: money.refine((v) => v > 0, "Amount must be positive"),
-    method: z.enum(methods),
+    method: z.preprocess(
+      (value) => (value === "Bank Transfer" ? "Bank transfer" : value),
+      z.enum(paymentMethods),
+    ),
+    payment_type: z
+      .enum(["Payment", "Advance", "Partial", "Installment", "Final"])
+      .default("Payment"),
     reference: optional,
     remarks: optional,
     idempotency_key: z.uuid(),
@@ -112,6 +129,11 @@ export const schemas = {
     phone: z.string().max(30),
     email: z.union([z.email(), z.literal("")]),
     address: z.string().max(2000),
+    tagline: z.string().trim().max(120).optional(),
+    signatory_name: z.string().trim().max(100).optional(),
+    signatory_title: z.string().trim().max(100).optional(),
+    receipt_footer: z.string().trim().max(300).optional(),
+    logo_data_url: z.string().max(140000).nullable().optional(),
   }),
   users: z.object({
     name: text,
@@ -130,6 +152,7 @@ export const schemas = {
         "Password must be at most 72 UTF-8 bytes",
       ),
   }),
+  resetPassword: z.object({ current_password: z.string().min(1).max(72) }),
 };
 export function parse(kind, data) {
   return schemas[kind].parse(data);

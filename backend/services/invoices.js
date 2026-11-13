@@ -12,7 +12,7 @@ export const invoiceSelect = `SELECT i.*,i.customer_snapshot->>'name' AS custome
  COALESCE(p.paid,0)::numeric(12,2) AS paid_amount,
  CASE WHEN i.status='Void' THEN 0 ELSE greatest(i.total_amount-COALESCE(p.paid,0),0) END::numeric(12,2) AS balance_amount,
  CASE WHEN i.status='Void' THEN 'Void' WHEN COALESCE(p.paid,0)>=i.total_amount THEN 'Paid' WHEN i.due_date<CURRENT_DATE THEN 'Overdue' WHEN COALESCE(p.paid,0)>0 THEN 'Part paid' ELSE 'Unpaid' END AS payment_status
- FROM invoices i LEFT JOIN (SELECT booking_id,sum(amount) AS paid FROM payments GROUP BY booking_id) p ON p.booking_id=i.booking_id`;
+ FROM invoices i LEFT JOIN (SELECT booking_id,sum(amount) AS paid FROM payment_ledger GROUP BY booking_id) p ON p.booking_id=i.booking_id`;
 export async function invoiceDetails(id) {
   const { rows } = await pool.query(invoiceSelect + " WHERE i.id=$1", [id]);
   if (!rows[0]) throw fail("Invoice not found", 404);
@@ -151,19 +151,4 @@ export async function voidInvoice(id, reason, user) {
   });
   return invoiceDetails(id);
 }
-export async function receiptDetails(id) {
-  const { rows } = await pool.query(
-    `SELECT p.*,c.name AS customer_name,c.mobile,c.email,c.address,b.agreed_amount,(SELECT COALESCE(sum(amount),0) FROM payments WHERE booking_id=p.booking_id)::numeric(12,2) AS paid_amount FROM payments p JOIN bookings b ON b.id=p.booking_id JOIN customers c ON c.id=b.customer_id WHERE p.id=$1`,
-    [id],
-  );
-  if (!rows[0]) throw fail("Payment not found", 404);
-  return {
-    ...rows[0],
-    receipt_number: "PAY-" + String(rows[0].id).padStart(5, "0"),
-    studio: (
-      await pool.query(
-        "SELECT name,phone,email,address FROM studio_settings WHERE id=1",
-      )
-    ).rows[0],
-  };
-}
+export { receiptDetails } from "./receipt-snapshots.js";

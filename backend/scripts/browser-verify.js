@@ -97,7 +97,7 @@ try {
   await page.getByLabel("Event type").selectOption({ label: "Wedding" });
   await page.getByLabel("Event date").fill("2026-12-12");
   await page.getByLabel("Event location").fill("Bluebell Hall");
-  await page.getByLabel("Agreed amount").fill("25000");
+  await page.getByLabel("Total booking amount").fill("25000");
   await page.getByRole("button", { name: "Save booking" }).click();
   await expect(
     page.getByRole("cell", { name: "Meera Rao", exact: true }),
@@ -107,13 +107,29 @@ try {
   await page.getByLabel("Booking", { exact: false }).selectOption({ index: 1 });
   await page.getByLabel("Amount (₹)", { exact: false }).fill("5000");
   await page.getByLabel("Payment method").selectOption("UPI");
-  await page.getByRole("button", { name: "Save payment" }).click();
+  await page.getByRole("button", { name: "Save receipt" }).click();
   await expect(
     page.getByRole("cell", { name: "Meera Rao", exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "View receipt" }).click();
+  await expect(page.locator('iframe[title$="PDF preview"]')).toBeVisible();
+  await page.getByRole("button", { name: "Close dialog" }).click();
+  await nav("Albums");
+  await nav("Payments");
+  await page.getByRole("button", { name: "Reverse / history" }).click();
+  await page.getByLabel("Reversal amount").fill("250");
+  await page.getByLabel("Reason", { exact: true }).fill("Browser correction");
+  await page.getByRole("button", { name: "Confirm reversal" }).click();
   await expect(
-    page.getByRole("heading", { name: "PAYMENT RECEIPT", exact: true }),
+    page.getByText(
+      "Payment reversal recorded. Net receipts and outstanding balances are updated.",
+    ),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Reverse / history" }).click();
+  await expect(
+    page
+      .getByRole("dialog")
+      .getByRole("cell", { name: "Browser correction", exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Close dialog" }).click();
   await nav("Albums");
@@ -317,10 +333,32 @@ try {
   await expect(
     page.getByRole("heading", { name: "User created", exact: true }),
   ).toBeVisible();
-  const temporaryPassword = await page
+  let temporaryPassword = await page
     .locator(".temporary-credentials input")
     .inputValue();
   assert.ok(temporaryPassword.length >= 12);
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  const staffRow = page.getByRole("row").filter({
+    has: page.getByRole("cell", { name: "First Login Staff", exact: true }),
+  });
+  await staffRow
+    .getByRole("button", { name: "Reset password", exact: true })
+    .click();
+  await page
+    .getByLabel("Your administrator password")
+    .fill("incorrect-password");
+  await page.getByRole("button", { name: "Confirm password reset" }).click();
+  await expect(page.getByRole("dialog").getByRole("alert")).toContainText(
+    "Your current password is incorrect",
+  );
+  await page.getByLabel("Your administrator password").fill(password);
+  await page.getByRole("button", { name: "Confirm password reset" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Password reset", exact: true }),
+  ).toBeVisible();
+  temporaryPassword = await page
+    .locator(".temporary-credentials input")
+    .inputValue();
   await page.getByRole("button", { name: "Done", exact: true }).click();
   await page.getByRole("button", { name: "Switch to dark mode" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
