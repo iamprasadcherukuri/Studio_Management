@@ -19,6 +19,7 @@ try {
     ).replace(/\bstudio\b/g, schema),
   );
   process.env.NODE_ENV = "test";
+  process.env.CORS_ORIGINS = "http://localhost:15173";
   const { migrate } = await import("../database/migrate.js");
   await migrate(database, schema);
   process.env.DB_SCHEMA = schema;
@@ -34,6 +35,11 @@ try {
   vite = await createServer({
     root: frontend,
     configFile: frontend + "/vite.config.js",
+    define: {
+      "import.meta.env.VITE_API_URL": JSON.stringify(
+        "http://127.0.0.1:14000/api",
+      ),
+    },
     server: {
       host: "127.0.0.1",
       port: 15173,
@@ -48,6 +54,11 @@ try {
   });
   page.setDefaultTimeout(10000);
   const errors = [];
+  const apiRequests = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/api/")) apiRequests.push(request.url());
+  });
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("http://localhost:15173");
   await expect(
@@ -247,15 +258,22 @@ try {
   await mkdir(new URL("../../test-results/", import.meta.url), {
     recursive: true,
   });
-  await page.getByRole('button',{name:'Switch to dark mode'}).click();
-  await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
+  await page.getByRole("button", { name: "Switch to dark mode" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await page.reload();
-  await expect(page.getByRole('button',{name:'Switch to light mode'})).toBeVisible();
-  await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
-  await expect(page.getByText('Money in, money out')).toBeVisible();
-  await page.screenshot({path:fileURLToPath(new URL('../../test-results/dashboard-dark.png',import.meta.url)),fullPage:true});
-  await page.getByRole('button',{name:'Switch to light mode'}).click();
-  await expect(page.locator('html')).toHaveAttribute('data-theme','light');
+  await expect(
+    page.getByRole("button", { name: "Switch to light mode" }),
+  ).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(page.getByText("Money in, money out")).toBeVisible();
+  await page.screenshot({
+    path: fileURLToPath(
+      new URL("../../test-results/dashboard-dark.png", import.meta.url),
+    ),
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "Switch to light mode" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await page.screenshot({
     path: fileURLToPath(
       new URL("../../test-results/dashboard-desktop.png", import.meta.url),
@@ -304,12 +322,14 @@ try {
     .inputValue();
   assert.ok(temporaryPassword.length >= 12);
   await page.getByRole("button", { name: "Done", exact: true }).click();
-  await page.getByRole('button',{name:'Switch to dark mode'}).click();
-  await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
-  await page.getByRole('button',{name:'Switch to light mode'}).click();
-  await expect(page.getByRole('button',{name:'Open profile'})).toHaveCount(0);
-  await page.getByRole('button',{name:'Toggle navigation'}).click();
-  await page.getByRole('button',{name:'Sign out',exact:true}).click();
+  await page.getByRole("button", { name: "Switch to dark mode" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.getByRole("button", { name: "Switch to light mode" }).click();
+  await expect(page.getByRole("button", { name: "Open profile" })).toHaveCount(
+    0,
+  );
+  await page.getByRole("button", { name: "Toggle navigation" }).click();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await page.getByLabel("Email address").fill("firstlogin@example.test");
   await page.getByLabel("Password", { exact: true }).fill(temporaryPassword);
   await page.getByRole("button", { name: "Sign in to workspace" }).click();
@@ -348,6 +368,15 @@ try {
     page.getByRole("button", { name: "Switch to dark mode" }),
   ).toBeVisible();
   assert.deepEqual(errors, [], "Browser runtime errors");
+  assert.ok(apiRequests.length > 0);
+  assert.ok(
+    apiRequests.every(
+      (url) =>
+        url.startsWith("http://127.0.0.1:14000/api/") &&
+        !url.includes("/api/api/"),
+    ),
+    "All API requests must reach the API host with exactly one /api prefix",
+  );
   console.log(
     "PASS: existing module forms; invoice issue/PDF download/void; receipt PDF; equipment create/assign/return/maintenance/expense/retire; profile/logout; desktop/mobile; first-login password changes; no runtime errors.",
   );

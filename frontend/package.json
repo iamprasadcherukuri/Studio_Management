@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
+    "build:vercel": "node scripts/build-vercel.js",
     "preview": "vite preview"
   },
   "dependencies": {

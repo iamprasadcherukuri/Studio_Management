@@ -24,6 +24,58 @@ try {
   server = app.listen(0, "127.0.0.1");
   await new Promise((resolve) => server.on("listening", resolve));
   const base = `http://127.0.0.1:${server.address().port}/api`;
+  const { config } = await import("../config/env.js");
+  const expectedService = { status: "OK", service: "Studio Management API" };
+  const rootResponse = await fetch(new URL("/", base));
+  assert.equal(rootResponse.status, 200);
+  assert.deepEqual(await rootResponse.json(), expectedService);
+  const healthResponse = await fetch(base + "/health");
+  assert.equal(healthResponse.status, 200);
+  assert.deepEqual(await healthResponse.json(), expectedService);
+  const missing = await fetch(new URL("/missing-route", base));
+  assert.equal(missing.status, 404);
+  assert.deepEqual(await missing.json(), { error: "Endpoint not found" });
+  const allowed = await fetch(base + "/auth/login", {
+    method: "OPTIONS",
+    headers: {
+      Origin: config.origins[0],
+      "Access-Control-Request-Method": "POST",
+      "Access-Control-Request-Headers": "content-type,authorization",
+    },
+  });
+  assert.equal(allowed.status, 204);
+  assert.equal(
+    allowed.headers.get("access-control-allow-origin"),
+    config.origins[0],
+  );
+  assert.match(
+    allowed.headers.get("access-control-allow-headers"),
+    /Authorization/i,
+  );
+  const blocked = await fetch(base + "/auth/login", {
+    method: "OPTIONS",
+    headers: {
+      Origin: "https://not-allowed.example",
+      "Access-Control-Request-Method": "POST",
+    },
+  });
+  assert.equal(blocked.status, 403);
+  assert.equal(blocked.headers.get("access-control-allow-origin"), null);
+  const originalQuery = pool.query;
+  try {
+    pool.query = async () => {
+      throw new Error("Sensitive database details must not be returned");
+    };
+    const unavailable = await fetch(base + "/health");
+    assert.equal(unavailable.status, 503);
+    assert.deepEqual(await unavailable.json(), {
+      status: "ERROR",
+      service: "Studio Management API",
+      error: "Database unavailable",
+    });
+  } finally {
+    pool.query = originalQuery;
+  }
   let token = "";
   async function request(
     path,
@@ -306,7 +358,7 @@ try {
   await request(`/expenses/${expense.id}`, { method: "DELETE" });
   assert.equal(Number((await request("/dashboard")).metrics.expenses), 0);
   console.log(
-    "PASS: setup/login, role enforcement, customers, bookings/staff, duplicate/overpayment/concurrent receipts, albums, expenses, all 11 reports, settings and user revocation.",
+    "PASS: root/health/404 routes, database failure sanitization, allowed/blocked CORS preflight, setup/login, roles, customers, bookings, payments/concurrency, albums, expenses, reports, settings and user revocation.",
   );
 } finally {
   if (server) await new Promise((resolve) => server.close(resolve));

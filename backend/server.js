@@ -6,9 +6,27 @@ import { config } from "./config/env.js";
 import { api } from "./controllers/api.js";
 import { enhancements } from "./routes/enhancements.js";
 export const app = express();
+app.set("trust proxy", config.proxyHops);
 app.use(helmet());
-app.use(cors({ origin: config.origin }));
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || config.origins.includes(origin))
+        return callback(null, true);
+      callback(
+        Object.assign(new Error("Origin is not allowed"), { status: 403 }),
+      );
+    },
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    exposedHeaders: ["Content-Disposition"],
+    maxAge: 600,
+  }),
+);
 app.use(express.json({ limit: "100kb" }));
+app.get("/", (req, res) =>
+  res.json({ status: "OK", service: "Studio Management API" }),
+);
 app.use("/api", enhancements);
 app.use("/api", api);
 app.use((req, res) => res.status(404).json({ error: "Endpoint not found" }));

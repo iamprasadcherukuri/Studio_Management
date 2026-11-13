@@ -5,9 +5,15 @@ dotenv.config({
   path: new URL("../.env.supabase", import.meta.url),
   quiet: true,
 });
-if (!process.env.SUPABASE_DATABASE_URL)
+if (!process.env.SUPABASE_DATABASE_URL && !process.env.DATABASE_URL)
   throw new Error("Configure SUPABASE_DATABASE_URL in backend/.env.supabase");
-const url = new URL(process.env.SUPABASE_DATABASE_URL);
+const url = new URL(
+  process.env.SUPABASE_DATABASE_URL || process.env.DATABASE_URL,
+);
+if (["disable", "no-verify"].includes(url.searchParams.get("sslmode")))
+  throw new Error("TLS verification cannot be disabled");
+for (const key of ["sslmode", "sslrootcert", "sslcert", "sslkey"])
+  url.searchParams.delete(key);
 const override = process.argv.find((v) => v.startsWith("--database="));
 if (override) url.pathname = "/" + override.split("=")[1];
 const certPath =
@@ -17,7 +23,11 @@ const client = new pg.Client({
   connectionString: url.toString(),
   ssl: {
     rejectUnauthorized: true,
-    ...(existsSync(certPath) ? { ca: readFileSync(certPath, "utf8") } : {}),
+    ...(process.env.SUPABASE_CA_CERT
+      ? { ca: process.env.SUPABASE_CA_CERT.replaceAll("\\n", "\n") }
+      : existsSync(certPath)
+        ? { ca: readFileSync(certPath, "utf8") }
+        : {}),
   },
   connectionTimeoutMillis: 15000,
   query_timeout: 15000,

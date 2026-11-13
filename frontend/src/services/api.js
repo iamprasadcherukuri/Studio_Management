@@ -1,5 +1,9 @@
 import axios from "axios";
-export const api = axios.create({ baseURL: "/api" });
+import { resolveApiBase } from "./api-base";
+export const api = axios.create({
+  baseURL: resolveApiBase(import.meta.env.VITE_API_URL),
+  timeout: 60000,
+});
 api.interceptors.request.use((c) => {
   const token = sessionStorage.getItem("studio-token");
   if (token) c.headers.Authorization = `Bearer ${token}`;
@@ -19,4 +23,10 @@ api.interceptors.response.use(
   },
 );
 export const message = (e) =>
-  e.response?.data?.error || e.message || "Something went wrong";
+  e.response?.data?.error ||
+  (e.code === "ECONNABORTED"
+    ? "The API took too long to respond. Please try again."
+    : e.code === "ERR_NETWORK" || (!e.response && e.request)
+      ? "Cannot reach the API. Check your connection and API URL."
+      : e.message) ||
+  "Something went wrong";

@@ -16,8 +16,19 @@ const limited = rateLimit({
   legacyHeaders: false,
 });
 api.get("/health", async (req, res) => {
-  await pool.query("SELECT 1");
-  res.json({ status: "ok" });
+  res.set("Cache-Control", "no-store");
+  try {
+    await pool.query({ text: "SELECT 1", query_timeout: 5000 });
+    res.json({ status: "OK", service: "Studio Management API" });
+  } catch {
+    res
+      .status(503)
+      .json({
+        status: "ERROR",
+        service: "Studio Management API",
+        error: "Database unavailable",
+      });
+  }
 });
 api.get("/auth/status", async (req, res) => {
   const { rows } = await pool.query(

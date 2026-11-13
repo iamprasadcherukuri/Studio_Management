@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: studio-management-api
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm run start -w backend
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: FRONTEND_URL
+        value: https://studio-management-sandy.vercel.app
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: DATABASE_TARGET
+        value: supabase
+      - key: DB_SCHEMA
+        value: studio
+      - key: SUPABASE_DATABASE_URL
+        sync: false
+      - key: SUPABASE_CA_CERT
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SETUP_TOKEN
+        generateValue: true

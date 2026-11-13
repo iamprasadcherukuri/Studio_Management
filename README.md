@@ -8,10 +8,10 @@ Install Node.js 22.12+ and PostgreSQL 16+. Open PowerShell in this directory.
 
 ```powershell
 npm install
-Copy-Item backend/.env.example backend/.env
+if (!(Test-Path backend/.env)) { New-Item backend/.env -ItemType File }
 ```
 
-Edit `backend/.env`. Set `DATABASE_URL` to your PostgreSQL connection; URL-encode special characters in the password. The application uses database `studio_db` and schema `studio`. The supplied local connection is kept in ignored `backend/.env`; it is not part of the source. For a new installation, connect with pgAdmin or psql and run `CREATE DATABASE studio_db;` first. Use a dedicated database owner for normal deployment rather than a PostgreSQL superuser.
+Edit `backend/.env`. Set `DATABASE_TARGET=local`, `DATABASE_URL` to your PostgreSQL connection, `DB_SCHEMA=studio`, `JWT_SECRET`, `SETUP_TOKEN`, and `FRONTEND_URL=http://localhost:5173`. URL-encode special characters in the password. The application uses local database `studio_db` and schema `studio`. Environment files are intentionally excluded from Git. For a new installation, connect with pgAdmin or psql and run `CREATE DATABASE studio_db;` first. Use a dedicated database owner for normal deployment rather than a PostgreSQL superuser.
 
 Generate separate random secrets for `JWT_SECRET` and `SETUP_TOKEN` (at least 32 and 24 characters respectively):
 
@@ -25,7 +25,7 @@ npm run dev
 
 Open http://localhost:5173. API runs on http://localhost:4000. The first screen creates an administrator using the local `SETUP_TOKEN`, your name, email and a password of at least 12 characters. No account or credentials are seeded. Setup locks after the first account exists; remove `SETUP_TOKEN` from your environment after setup. Sign in after creating the administrator. Create studio details, packages and staff under Settings; then customers and bookings.
 
-`schema.sql` is idempotent for fresh installation, not a migration mechanism. Schema name is fixed to `studio` in SQL; keep `DB_SCHEMA=studio`. PostgreSQL credentials and both generated secrets must remain private. `.env` is ignored. Session JWTs last 8 hours, are stored in browser session storage and checked against active users on every API request. Use HTTPS and a reverse proxy for any remote deployment. The local server binds to loopback.
+`schema.sql` is idempotent for fresh installation, not a migration mechanism. Schema name is fixed to `studio` in SQL; keep `DB_SCHEMA=studio`. PostgreSQL credentials and both generated secrets must remain private. `.env` is ignored. Session JWTs last 8 hours, are stored in browser session storage and checked against active users on every API request. Use HTTPS and a reverse proxy for any remote deployment. Express binds to `0.0.0.0` and the configured port for Render compatibility; keep local development behind your firewall.
 
 ## Commands
 
@@ -192,4 +192,64 @@ $env:PGSSLROOTCERT = (Resolve-Path backend/certs/supabase-ca.crt).Path
 & "$pgBin\pg_restore.exe" --host=aws-1-ap-southeast-1.pooler.supabase.com --port=5432 --username=postgres.PROJECT_REF --dbname=VERIFIED_DATABASE --no-owner --no-acl --single-transaction --exit-on-error --password backups/REVIEWED_EXPORT.dump
 ```
 
-`npm run start:supabase -w backend` explicitly selects the prepared Supabase connection and a pool of five clients while preserving the local default. It requires the CA certificate and a migrated target schema. It does not initialize or migrate the hosted database. Use a dedicated runtime role and separate production JWT secret before public deployment. The current loopback-bound development server configuration is not a Render deployment configuration; cloud hosting preparation remains a separate stage.
+`npm run start:supabase -w backend` explicitly selects the prepared Supabase connection and a pool of five clients while preserving the local default. It accepts platform environment variables without requiring local environment files. It requires the CA certificate (or `SUPABASE_CA_CERT`) and a migrated target schema. It does not initialize or migrate the hosted database. Use a dedicated runtime role and separate production JWT secret before public deployment.
+
+## Vercel / Render connectivity configuration
+
+The original Render root 404 meant no `/` handler existed; `/api/health` and `/api/auth/status` were already reachable. The deployed Vercel `/api/health` and `/customers` paths returned 404, and Render's CORS header allowed only localhost. The changes below fix those distinct routing/configuration issues without changing authentication or existing business endpoints.
+
+### Existing Render service
+
+Keep the repository root as the service root. Build with `npm ci`, start with `npm run start -w backend`, and set the health check to `/api/health`. Render supplies `PORT`; the app listens on `0.0.0.0`. `render.yaml` is a reviewable blueprint for a new service; the existing service can be updated through its settings instead of creating a duplicate.
+
+Set these in Render's Environment settings before redeploying:
+
+| Variable              | Value                                                                                               |
+| --------------------- | --------------------------------------------------------------------------------------------------- |
+| NODE_ENV              | `production`                                                                                        |
+| FRONTEND_URL          | `https://studio-management-sandy.vercel.app`                                                        |
+| TRUST_PROXY_HOPS      | `1` for the direct Vercel-browser → Render API path; review if adding more proxies                  |
+| DATABASE_TARGET       | `supabase`                                                                                          |
+| SUPABASE_DATABASE_URL | The verified Supabase session-pooler connection string; keep it private                             |
+| SUPABASE_CA_CERT      | Full PEM certificate from Supabase Database Settings → SSL Configuration, including BEGIN/END lines |
+| DB_SCHEMA             | `studio`                                                                                            |
+| JWT_SECRET            | Existing stable production secret, at least 32 characters                                           |
+| SETUP_TOKEN           | Only if first-admin setup is still required; at least 24 characters                                 |
+
+`FRONTEND_ORIGIN` remains a supported legacy alias; `FRONTEND_URL` takes precedence. For multiple permitted frontends, use `CORS_ORIGINS=https://one.example,https://two.example` with exact origins, not a wildcard. Requests without an Origin header (health checks and server clients) work normally. Disallowed browser origins receive HTTP 403. OPTIONS preflight permits JSON/Authorization and the existing CRUD methods. PDFs expose Content-Disposition for cross-origin download clients. JWT remains a Bearer token; cookies/credentials mode is not enabled.
+
+Supabase mode accepts `SUPABASE_DATABASE_URL` or, as a fallback, `DATABASE_URL`; it no longer requires a separate local URL. URL SSL query options cannot disable verified TLS. Supply either `SUPABASE_CA_CERT` (multiline PEM, or escaped newlines), `SUPABASE_CA_PATH` (for a Render secret file), or the default bundled local certificate path. Verification stays enabled. Confirm the database name from the Supabase Connect panel; it is commonly `postgres`, and must not be assumed to be `studio_db`. No production schema/data migration is performed by startup.
+
+Both `/` and `/api/health` return `{ "status": "OK", "service": "Studio Management API" }`. `/` is a liveness route; `/api/health` also checks PostgreSQL. Database failure returns sanitized HTTP 503, without a connection string or raw error. The existing 404 handler is retained.
+
+### Existing Vercel project
+
+Set `VITE_API_URL=https://studio-management-fv00.onrender.com` for Production (and explicitly selected Preview environments), then redeploy. A trailing `/api` is also accepted and normalized to exactly one `/api`. The value is a public API URL, never a database URL or secret. Vite embeds it during build, so changing it requires a new deployment. Without it, ordinary local development uses `/api` through Vite's proxy. Set `DEV_API_TARGET` only when changing the local API port.
+
+To preserve the instruction to keep `vercel.json` out of Git, the tracked `frontend/scripts/build-vercel.js` emits Vercel Build Output API routing rather than depending on that ignored file. Configure:
+
+| Vercel setting   | Value                                                 |
+| ---------------- | ----------------------------------------------------- |
+| Root Directory   | `frontend`                                            |
+| Framework Preset | `Other` (use the explicit Build Output API artifact)  |
+| Install Command  | `npm ci`                                              |
+| Build Command    | `npm run build:vercel`                                |
+| Output Directory | Leave unset/default; Vercel consumes `.vercel/output` |
+| VITE_API_URL     | `https://studio-management-fv00.onrender.com`         |
+
+The build creates `.vercel/output/static` and `config.json` with an API forwarding route, static-asset handling, and an `/index.html` fallback for React Router. Frontend Axios calls go directly to the configured Render URL; the generated proxy also supports deliberate same-origin `/api/*` requests. API paths are processed before the SPA fallback, so backend JSON errors never become an HTML success page. The normal `npm run build` still produces `dist` for other static hosts; it does not install Vercel routing. Do not override the generated artifact with a conflicting local `vercel.json`. Vercel build artifacts and all environment files remain ignored.
+
+### Validation and troubleshooting
+
+After redeploying, verify the actual hosted responses:
+
+```powershell
+Invoke-RestMethod https://studio-management-fv00.onrender.com/
+Invoke-RestMethod https://studio-management-fv00.onrender.com/api/health
+Invoke-RestMethod https://studio-management-sandy.vercel.app/api/health
+Invoke-WebRequest https://studio-management-sandy.vercel.app/customers -UseBasicParsing
+```
+
+Inspect browser Network requests: login/setup/data requests should target `https://studio-management-fv00.onrender.com/api/...`, never `/api/api/...`. OPTIONS should return the exact deployed Vercel origin in Access-Control-Allow-Origin. If root is OK but health is 503, investigate database URL/CA/schema. If CORS still allows localhost, update Render's environment and redeploy. If frontend requests still use the Vercel host accidentally, verify VITE_API_URL was set before the build. If a React Router refresh returns 404, verify Build Output API settings. A Render cold start may take time; the client allows 60 seconds and reports a retryable timeout.
+
+Automated coverage includes API URL normalization, production origin/port/proxy validation, Supabase-only startup settings, root/health/404 responses, allowed and blocked preflight, sanitized database failure, and browser flows using an API on a separate origin. Integration tests require a local `DATABASE_URL` and a test JWT secret, and use disposable schemas. No hosted migration, Git push or cloud redeployment is implied by a successful local test.

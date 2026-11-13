@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "node --watch server.js",
     "start": "node server.js",
-    "start:supabase": "node --env-file=.env --env-file=.env.supabase --input-type=module -e \"process.env.DATABASE_TARGET='supabase'; await import('./server.js')\"",
+    "start:supabase": "node scripts/start-supabase.js",
     "db:init": "node database/init.js",
     "db:backup": "node scripts/backup.js",
     "db:migrate": "node database/migrate.js",
