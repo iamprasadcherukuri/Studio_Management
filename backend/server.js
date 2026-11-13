@@ -46,7 +46,8 @@ app.use((error, req, res, next) => {
           : error.message,
     });
 });
-if (process.env.NODE_ENV !== "test")
-  app.listen(config.port, "127.0.0.1", () =>
-    console.log(`Studio API: http://localhost:${config.port}`),
-  );
+if (process.env.NODE_ENV !== "test") {
+  app.listen(config.port, "0.0.0.0", () => {
+    console.log(`Studio API running on port ${config.port}`);
+  });
+}
