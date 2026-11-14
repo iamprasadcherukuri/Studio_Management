@@ -599,3 +599,77 @@ Recommended order: (1) review historical sensitive artifacts/exposure; (2) prote
 npm run verify:project-audit -w backend
 npm run audit:inventory -w backend
 ```
+
+## Audit fixes implemented - migration 008
+
+This section supersedes the earlier audit's open F01-F03 and P01-P09 statuses. All twelve original cases now have passing regression assertions and their unsafe reproductions no longer succeed. Optional customer duplicate policy, package activation and staff activation workflows remain separate and were not added.
+
+### Final verification table
+
+The main regression suite is backend/scripts/verify-audit-fixes.js; unit coverage is backend/tests/audit-fixes.test.js, with financial cross-module checks in verify-financial-audit.js. The table names key implementation files; the exact file inventory follows.
+
+| Finding | Status | Files changed | Tests | Result |
+| --- | --- | --- | --- | --- |
+| F01 | Fixed | services/booking-pricing.js, records.js; frontend booking-pricing.js, App.jsx; 008 | One/multiple granted discounts, legacy full-record edits, concurrent pricing/payment, invalid balance, old receipt | Pass |
+| F02 | Fixed | services/invoices.js, pdf.js; frontend Enhancements.jsx; 008 | Issue-time paid/balance snapshot, identical PDF financial text after payment, DB snapshot/item protection, legacy handling, void/reissue | Pass |
+| F03 | Fixed | routes/enhancements.js; frontend money.js, RevenueChart.jsx, App.jsx | Combined valid invoices above individual numeric capacity; exact currency beyond safe JS cent precision | Pass |
+| P01 | Fixed | services/scheduling.js, equipment.js, records.js | Duration-preserving range shift, conflicts/rollback, concurrent assignment versus reschedule, returned history | Pass |
+| P02 | Fixed | services/scheduling.js, equipment.js; 008 | Distinct Cancelled lifecycle, repeat safety, released future range, issued-equipment restriction, failed paid-cancellation rollback | Pass |
+| P03 | Fixed | services/records.js, validation.js; 008 | Stable key, concurrent retry, payload conflict, separate equal expenses, missing key, legacy NULL-key update | Pass |
+| P04 | Fixed | services/validation.js, records.js; frontend App.jsx | Future actual delivery, missing/blank acknowledgement and new delivery on cancelled booking rejected | Pass |
+| P05 | Fixed | services/user-status.js; controllers/api.js | Old JWT invalid while disabled and after re-enable; new login works | Pass |
+| P06 | Fixed | services/user-status.js, branding.js; controllers/api.js; 008 | Atomic status log with actor, target, prior/new status and time; no password/JWT in details | Pass |
+| P07 | Fixed | services/validation.js; controllers/api.js | Shared UTF-8 byte validation on setup/create, generated reset, login/current/new password validation | Pass |
+| P08 | Fixed | services/readiness.js; database/versions.js; controllers/api.js | Missing migration, required column, disabled critical trigger produce sanitized 503; liveness remains 200 | Pass |
+| P09 | Fixed | services/user-status.js; controllers/api.js; 008 | Simultaneous authenticated admins, actor recheck, serialized status transition, final-admin DB demotion guard | Pass |
+
+### Implementation and compatibility
+
+Booking-level discount metadata is distinct from immutable payment-level discounts. Existing cumulative discount_amount and net agreed_amount retain their meanings, while new booking_discount_type/value/amount fields describe only the booking portion. The server sums issued payment discounts under the booking lock and preserves them on edits. The UI edits the booking portion and shows the final net; old full-record requests remain supported when unambiguous. Existing legacy metadata is not bulk-inferred or backfilled. On an explicit future edit, a legacy booking's known discount amount can be represented as Fixed if the original percentage was never retained. Read-only financial audit SQL checks both the payment-discount floor and the new metadata equality.
+
+New invoices capture collection figures at issue, then freeze the snapshot and financial/item data. The invoice screen retains live current collections separately. Existing invoices with no issue-time snapshot keep NULL: the PDF explicitly says those collection figures are unavailable instead of inventing historical values or using today's ledger. Original invoice numbers, line items, charges, discounts, tax and customer/studio snapshots are not rewritten. Voiding is still the explicit audited correction path.
+
+Future equipment reservations move by the event-date delta, preserving duration/offset, in the same transaction as the booking. Conflicts reject the entire change. Scheduling writes take a per-schema transaction advisory lock before equipment/booking row locks to avoid inconsistent lock order. This deliberately serializes scheduling writes for the single-studio application; it can be refined later if measured contention requires it. Cancellation changes future Active reservations to Cancelled with actor/time/reason and no actual_return_date. Already-issued equipment must be returned before cancelling/rescheduling. Returned assignments stay historical. Equipment current-day checks and invoice overdue checks now consistently use the existing India studio timezone.
+
+New expense creation requires idempotency_key. The React form already creates one key per new form and preserves it across retries. A database unique constraint plus a transaction advisory lock and normalized request hash returns the original resource for the same payload and rejects changed reuse. Different keys allow legitimate identical expenses. Old expenses retain NULL keys and remain editable; maintenance expense creation remains protected by its existing locked one-to-one link. External/older clients must supply a UUID on new expense POST requests; update requests need no new key.
+
+Status changes use the existing password_version as session version, increment it on a real transition, recheck the actor under ordered row locks, and write structured audit details transactionally. A per-schema administrator-status advisory lock serializes competing changes, with an additional DB final-admin guard for updates/deletes/demotion. No role-editing UI was introduced. Shared byte-length validation rejects passwords above bcrypt's 72-byte UTF-8 limit before hashing. Existing valid hashes are unchanged; any legacy account originally using an over-limit Unicode password needs an explicit administrator reset rather than silent truncation. Auth and temporary-password responses use no-store caching.
+
+Readiness checks the shared migration manifest through 008, required columns, critical validated constraints, the active-invoice unique index and enabled financial/admin triggers. It runs only on /api/health; / remains lightweight liveness. Responses remain compatible with Render and contain no schema details or secrets. New generated Vercel output includes frontend security headers with the configured API origin and trusted self/blob PDF support. These are source/build-artifact changes only; hosted headers are unchanged until a separately approved deployment. Chart positions still use numeric plotting, while tooltips use original exact monetary strings.
+
+### SQL, migration and preservation
+
+Use backend/database/upgrade_all.sql as the SINGLE file for an existing database. It applies only missing migrations 001-008, skips recorded versions on rerun, validates a contiguous known migration history, and stops on an incomplete base schema. It runs in one transaction with the studio migration lock. Select the target database or Supabase project in the SQL client; the script uses the studio schema. Verify a recoverable backup first. It does not create/switch databases. Use install_all.sql only for an empty installation.
+
+The standalone new-version file is backend/database/upgrade_008_audit_fixes.sql, generated from migrations/008_audit_fixes.up.sql. Previous applied migrations 001-007 were not edited. 008 adds metadata, request keys, audit details and a cancelled-reservation lifecycle, plus future-write integrity guards. No existing financial values or historical snapshots are backfilled. The migration runner and fresh installer include 008. Supabase compatibility uses ordinary PostgreSQL DDL, JSONB, PL/pgSQL, existing roles and transaction/advisory locks, without a new extension requirement; actual hosted execution remains unperformed.
+
+The approved local migration ran after a verified backup. A separate read-only before/after digest compared all original fields and row counts across 23 application tables, excluding the expected migration-log addition and newly introduced metadata columns. All matched. Proof: ignored test-results/migration008-preservation.json. Existing financial reconciliation still has zero violations. Disposable pre-008 fixtures additionally preserve original financial/user/customer/album/equipment/audit fields through migration and rerun, including historical incomplete data without silently rewriting it.
+
+upgrade_all.sql was executed successfully in disposable schemas starting from the base installation, migration 001 and migration 007, including legacy cash/expense rows. Each scenario preserved existing fields, skipped a repeated run safely and rejected a history gap. The dedicated npm command is verify:upgrade-all. Automatic 008 rollback refuses to discard new snapshots/request keys/reservation history. Prefer a forward correction. If rollback is needed, restore the verified pre-008 backup into a separate database and reconcile later transactions before approving a switch; do not restore over the live database blindly.
+
+### Exact source/file inventory for this fix phase
+
+Backend application: controllers/api.js; services/booking-pricing.js; services/records.js; services/equipment.js; services/invoices.js; services/pdf.js; services/validation.js; services/branding.js; services/user-status.js (new); services/scheduling.js (new); services/readiness.js (new); routes/enhancements.js.
+
+Database/build: database/migrations/008_audit_fixes.up.sql and .down.sql (new); database/versions.js (new); database/migrate.js; database/financial_audit.sql; database/install_all.sql (generated); database/upgrade_008_audit_fixes.sql (generated, new); database/upgrade_all.sql (generated, new); scripts/build-install-sql.js.
+
+Backend regression/preservation support: tests/audit-fixes.test.js (new); scripts/verify-audit-fixes.js (new); scripts/verify-upgrade-all.js (new); scripts/verify-local-preservation.js (new); scripts/verify-financial-audit.js (unsafe reproductions converted to safe assertions); scripts/verify-project-audit.js (compatibility wrapper); scripts/verify.js; scripts/verify-features.js; scripts/verify-install.js; scripts/verify-masters.js; package.json.
+
+Frontend: src/App.jsx; src/services/booking-pricing.js; src/services/money.js (new); src/components/RevenueChart.jsx; src/pages/Enhancements.jsx; scripts/build-vercel.js. README.md records the fixes and prerequisites. No extra Markdown report was created. Old audit JSON evidence remains preserved; new results use audit-fix-regressions.json and financial-audit-regressions.json.
+
+### Verification and release prerequisites
+
+Executed successfully: 19 unit tests; all 12 targeted finding regressions; concurrent payment/pricing, rescheduling/assignment and admin-status cases; 46 financial reconciliation checks with zero findings; base API; invoice/equipment feature suite; receipts/discounts/PDF suite; master suite; fresh installer; three combined-upgrade scenarios; browser desktop/mobile form/PDF workflows; production frontend build. The Vercel artifact is built locally for header/routing review; no cloud configuration was changed.
+
+Expected test changes were identified explicitly: old expense fixtures needed submission keys; the old audit probes were converted from expecting unsafe behavior to expecting the fixes; migration-count assertions now expect 008; conservative 008 rollback is intentionally rejected. Original audit evidence is retained. An automatic approval timeout delayed one browser launch; retrying the same local test succeeded. No failed assertion was silently ignored.
+
+Before production: verify a target backup and migration history, review/run upgrade_all.sql, deploy matching backend/frontend versions together, verify readiness, then smoke-test discounted booking edits, rescheduling/cancellation, expense retry, password disable/re-enable and invoice/receipt PDF preview/print. Apply schema changes before the new backend readiness requirement. Review the generated frontend CSP in the actual hosted PDF flow after deployment. No Supabase migration, Render/Vercel deployment, secret rotation, Git history rewrite or Git push was performed by this work.
+
+Remaining manual security actions: review historical environment/backup exposure and rotate affected PostgreSQL credentials, JWT signing secret and setup token where actually exposed; JWT-secret rotation signs out existing sessions. Remove or restrict shared backups and coordinate any history cleanup separately. Never print secret values. Production DB permissions/RLS exposure, backup restoration and hosted commit parity still need owner review. Family/shared customer mobiles remain permitted; duplicate warnings, package activation and staff activation require separate business approval and were not added.
+
+```powershell
+npm run verify:audit-fixes -w backend
+npm run verify:financial-audit -w backend
+npm run verify:upgrade-all -w backend
+npm run audit:financial -w backend
+```

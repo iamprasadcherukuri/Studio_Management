@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
-import {migrationVersions} from '../database/versions.js';
+import { migrationVersions } from "../database/versions.js";
 const core = await readFile(
   new URL("../database/schema.sql", import.meta.url),
   "utf8",
@@ -188,16 +188,24 @@ INSERT INTO schema_migrations(version) VALUES('003_receipt_design');
 COMMIT;
 `,
 );
-const steps=await Promise.all(migrationVersions.map(async(version,index)=>{
- const sql=await readFile(new URL(`../database/migrations/${version}.up.sql`,import.meta.url),'utf8');
- const delimiter=`$migration_${index+1}$`;
- if(sql.includes(delimiter))throw new Error('Migration delimiter collision');
- return `IF NOT EXISTS(SELECT 1 FROM schema_migrations WHERE version='${version}') THEN
+const steps = await Promise.all(
+  migrationVersions.map(async (version, index) => {
+    const sql = await readFile(
+      new URL(`../database/migrations/${version}.up.sql`, import.meta.url),
+      "utf8",
+    );
+    const delimiter = `$migration_${index + 1}$`;
+    if (sql.includes(delimiter))
+      throw new Error("Migration delimiter collision");
+    return `IF NOT EXISTS(SELECT 1 FROM schema_migrations WHERE version='${version}') THEN
  EXECUTE ${delimiter}${sql}${delimiter};
  INSERT INTO schema_migrations(version) VALUES('${version}');
 END IF;`;
-}));
-await writeFile(new URL('../database/upgrade_all.sql',import.meta.url),`-- ONE-RUN UPGRADE for an existing Photography Studio database.
+  }),
+);
+await writeFile(
+  new URL("../database/upgrade_all.sql", import.meta.url),
+  `-- ONE-RUN UPGRADE for an existing Photography Studio database.
 -- Select the target database/project in your SQL client. The application schema is studio.
 -- Verify a backup first. Review this file before running on production.
 -- Applies only missing migrations 001-008. Repeat runs skip recorded versions.
@@ -206,7 +214,7 @@ BEGIN;
 SET LOCAL search_path TO studio,public;
 SELECT pg_advisory_xact_lock(hashtext('studio-migrations:studio'));
 DO $upgrade_all$
-DECLARE required_table TEXT; expected TEXT[]:=ARRAY[${migrationVersions.map(v=>`'${v}'`).join(',')}]; n INTEGER;
+DECLARE required_table TEXT; expected TEXT[]:=ARRAY[${migrationVersions.map((v) => `'${v}'`).join(",")}]; n INTEGER;
 BEGIN
  FOREACH required_table IN ARRAY ARRAY['roles','users','customers','event_types','packages','staff','bookings','booking_staff','payments','albums','expenses','audit_logs','studio_settings'] LOOP
   IF to_regclass('studio.'||required_table) IS NULL THEN RAISE EXCEPTION 'Missing base table %. Use install_all.sql only for an empty installation; do not upgrade a partial schema.',required_table; END IF;
@@ -217,10 +225,11 @@ BEGIN
   IF NOT EXISTS(SELECT 1 FROM schema_migrations WHERE version=expected[n]) AND EXISTS(SELECT 1 FROM schema_migrations WHERE version=ANY(expected[n+1:array_length(expected,1)])) THEN RAISE EXCEPTION 'Migration history has a gap before %. Review it before upgrading.',expected[n]; END IF;
  END LOOP;
  IF NOT EXISTS(SELECT 1 FROM schema_migrations WHERE version=expected[1]) AND to_regclass('studio.invoices') IS NOT NULL THEN RAISE EXCEPTION 'Invoice tables exist without their migration marker. Review migration history before running this upgrade.'; END IF;
- ${steps.join('\n')}
+ ${steps.join("\n")}
  IF EXISTS(SELECT 1 FROM pg_constraint WHERE connamespace='studio'::regnamespace AND NOT convalidated) THEN RAISE EXCEPTION 'Unvalidated constraints found; upgrade rolled back'; END IF;
 END;
 $upgrade_all$;
 COMMIT;
 SELECT version FROM studio.schema_migrations ORDER BY version;
-`);
+`,
+);

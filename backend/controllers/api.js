@@ -17,7 +17,10 @@ import {
   reversalHistory,
 } from "../services/payment-reversals.js";
 export const api = Router();
-api.use('/auth',(req,res,next)=>{res.set('Cache-Control','no-store');next();});
+api.use("/auth", (req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  next();
+});
 const limited = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 30,
@@ -237,22 +240,25 @@ api.post("/users", admin, async (req, res) => {
     req.body.password || randomBytes(18).toString("base64url");
   const v = parse("users", { ...req.body, password: temporaryPassword });
   const hash = await bcrypt.hash(v.password, 12);
-  res.set('Cache-Control','no-store').status(201).json({
-    ...(await transaction(async (c) => {
-      const row = (
+  res
+    .set("Cache-Control", "no-store")
+    .status(201)
+    .json({
+      ...(await transaction(async (c) => {
+        const row = (
+          await c.query(
+            "INSERT INTO users(name,email,password_hash,role_id,must_change_password) SELECT $1,$2,$3,id,true FROM roles WHERE name=$4 RETURNING id,name,email,must_change_password",
+            [v.name, v.email, hash, v.role],
+          )
+        ).rows[0];
         await c.query(
-          "INSERT INTO users(name,email,password_hash,role_id,must_change_password) SELECT $1,$2,$3,id,true FROM roles WHERE name=$4 RETURNING id,name,email,must_change_password",
-          [v.name, v.email, hash, v.role],
-        )
-      ).rows[0];
-      await c.query(
-        "INSERT INTO audit_logs(user_id,action,entity,entity_id,details) VALUES($1,'create_user','users',$2,$3)",
-        [req.user.id, row.id, { role: v.role }],
-      );
-      return row;
-    })),
-    temporary_password: temporaryPassword,
-  });
+          "INSERT INTO audit_logs(user_id,action,entity,entity_id,details) VALUES($1,'create_user','users',$2,$3)",
+          [req.user.id, row.id, { role: v.role }],
+        );
+        return row;
+      })),
+      temporary_password: temporaryPassword,
+    });
 });
 api.patch("/users/:id", admin, async (req, res) => {
   res.json(

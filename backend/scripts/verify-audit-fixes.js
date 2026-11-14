@@ -102,11 +102,28 @@ try {
     "INSERT INTO invoice_items(invoice_id,description,quantity,unit_price,line_total) VALUES($1,'Legacy item',1,1000,1000)",
     [legacyInvoice.id],
   );
-  const legacyExpense=(await c.query("INSERT INTO expenses(date,category,description,amount,method) VALUES(CURRENT_DATE,'Travel','Legacy expense',100,'Cash') RETURNING id")).rows[0];
-  const legacyGear=(await c.query("INSERT INTO equipment(asset_code,name,category,condition) VALUES('LEGACY-GEAR','Legacy gear','Camera','Good') RETURNING id")).rows[0];
-  await c.query("INSERT INTO equipment_assignments(equipment_id,booking_id,assigned_by,assigned_date,expected_return_date) VALUES($1,$2,$3,CURRENT_DATE+2,CURRENT_DATE+3)",[legacyGear.id,legacyBooking.id,admin.id]);
-  await c.query("INSERT INTO albums(booking_id,album_type,size,pages,status,actual_delivery,acknowledgement) VALUES($1,'Wedding Album','12×18',10,'Delivered',CURRENT_DATE+5,'Legacy acknowledgement')",[legacyBooking.id]);
-  await c.query("INSERT INTO audit_logs(user_id,action,entity,entity_id) VALUES($1,'legacy_action','bookings',$2)",[admin.id,legacyBooking.id]);
+  const legacyExpense = (
+    await c.query(
+      "INSERT INTO expenses(date,category,description,amount,method) VALUES(CURRENT_DATE,'Travel','Legacy expense',100,'Cash') RETURNING id",
+    )
+  ).rows[0];
+  const legacyGear = (
+    await c.query(
+      "INSERT INTO equipment(asset_code,name,category,condition) VALUES('LEGACY-GEAR','Legacy gear','Camera','Good') RETURNING id",
+    )
+  ).rows[0];
+  await c.query(
+    "INSERT INTO equipment_assignments(equipment_id,booking_id,assigned_by,assigned_date,expected_return_date) VALUES($1,$2,$3,CURRENT_DATE+2,CURRENT_DATE+3)",
+    [legacyGear.id, legacyBooking.id, admin.id],
+  );
+  await c.query(
+    "INSERT INTO albums(booking_id,album_type,size,pages,status,actual_delivery,acknowledgement) VALUES($1,'Wedding Album','12×18',10,'Delivered',CURRENT_DATE+5,'Legacy acknowledgement')",
+    [legacyBooking.id],
+  );
+  await c.query(
+    "INSERT INTO audit_logs(user_id,action,entity,entity_id) VALUES($1,'legacy_action','bookings',$2)",
+    [admin.id, legacyBooking.id],
+  );
   const oldRows = {};
   for (const t of [
     "bookings",
@@ -115,7 +132,11 @@ try {
     "invoice_items",
     "expenses",
     "equipment_assignments",
-    "users","customers","albums","equipment","audit_logs",
+    "users",
+    "customers",
+    "albums",
+    "equipment",
+    "audit_logs",
   ])
     oldRows[t] = (
       await c.query(`SELECT to_jsonb(t) value FROM ${t} t ORDER BY id`)
@@ -633,11 +654,51 @@ try {
     201,
   );
   checks.push("P02 cancelled future ranges can be reserved again");
-  const paidGear=await call('/equipment','POST',{asset_code:'FIX-PAID',name:'Paid booking camera',category:'Camera',condition:'Good'},201);
-  const paidReservation=await call('/equipment-assignments','POST',{equipment_id:paidGear.id,booking_id:priceRace.id,assigned_date:dates.future,expected_return_date:dates.future},201);
-  await call(`/bookings/${priceRace.id}`,'PUT',{...bookData,total_amount:'1100',booking_discount_type:'NONE',booking_discount_value:0,status:'cancelled'},400);
-  assert.equal((await c.query('SELECT status FROM equipment_assignments WHERE id=$1',[paidReservation.id])).rows[0].status,'Active');
-  checks.push('P02 failed paid-booking cancellation rolls reservation changes back atomically');
+  const paidGear = await call(
+    "/equipment",
+    "POST",
+    {
+      asset_code: "FIX-PAID",
+      name: "Paid booking camera",
+      category: "Camera",
+      condition: "Good",
+    },
+    201,
+  );
+  const paidReservation = await call(
+    "/equipment-assignments",
+    "POST",
+    {
+      equipment_id: paidGear.id,
+      booking_id: priceRace.id,
+      assigned_date: dates.future,
+      expected_return_date: dates.future,
+    },
+    201,
+  );
+  await call(
+    `/bookings/${priceRace.id}`,
+    "PUT",
+    {
+      ...bookData,
+      total_amount: "1100",
+      booking_discount_type: "NONE",
+      booking_discount_value: 0,
+      status: "cancelled",
+    },
+    400,
+  );
+  assert.equal(
+    (
+      await c.query("SELECT status FROM equipment_assignments WHERE id=$1", [
+        paidReservation.id,
+      ])
+    ).rows[0].status,
+    "Active",
+  );
+  checks.push(
+    "P02 failed paid-booking cancellation rolls reservation changes back atomically",
+  );
   await call(
     "/equipment-assignments",
     "POST",
@@ -725,8 +786,17 @@ try {
     method: "Cash",
     idempotency_key: randomUUID(),
   };
-  const oldExpense=(await c.query('SELECT * FROM expenses WHERE id=$1',[legacyExpense.id])).rows[0];
-  const oldEdited=await call(`/expenses/${legacyExpense.id}`,'PUT',{...oldExpense,amount:101});assert.equal(oldEdited.idempotency_key,null);checks.push('P03 legacy NULL-key expenses remain editable without inventing a retry key');
+  const oldExpense = (
+    await c.query("SELECT * FROM expenses WHERE id=$1", [legacyExpense.id])
+  ).rows[0];
+  const oldEdited = await call(`/expenses/${legacyExpense.id}`, "PUT", {
+    ...oldExpense,
+    amount: 101,
+  });
+  assert.equal(oldEdited.idempotency_key, null);
+  checks.push(
+    "P03 legacy NULL-key expenses remain editable without inventing a retry key",
+  );
   const expenses = await Promise.all(
     [1, 2].map(() => call("/expenses", "POST", expense, 201)),
   );
