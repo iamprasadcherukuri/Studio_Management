@@ -17,6 +17,7 @@ import {
   reversalHistory,
 } from "../services/payment-reversals.js";
 export const api = Router();
+api.use('/auth',(req,res,next)=>{res.set('Cache-Control','no-store');next();});
 const limited = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 30,
@@ -236,7 +237,7 @@ api.post("/users", admin, async (req, res) => {
     req.body.password || randomBytes(18).toString("base64url");
   const v = parse("users", { ...req.body, password: temporaryPassword });
   const hash = await bcrypt.hash(v.password, 12);
-  res.status(201).json({
+  res.set('Cache-Control','no-store').status(201).json({
     ...(await transaction(async (c) => {
       const row = (
         await c.query(
