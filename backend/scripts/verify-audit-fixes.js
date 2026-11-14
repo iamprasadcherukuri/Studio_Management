@@ -633,6 +633,11 @@ try {
     201,
   );
   checks.push("P02 cancelled future ranges can be reserved again");
+  const paidGear=await call('/equipment','POST',{asset_code:'FIX-PAID',name:'Paid booking camera',category:'Camera',condition:'Good'},201);
+  const paidReservation=await call('/equipment-assignments','POST',{equipment_id:paidGear.id,booking_id:priceRace.id,assigned_date:dates.future,expected_return_date:dates.future},201);
+  await call(`/bookings/${priceRace.id}`,'PUT',{...bookData,total_amount:'1100',booking_discount_type:'NONE',booking_discount_value:0,status:'cancelled'},400);
+  assert.equal((await c.query('SELECT status FROM equipment_assignments WHERE id=$1',[paidReservation.id])).rows[0].status,'Active');
+  checks.push('P02 failed paid-booking cancellation rolls reservation changes back atomically');
   await call(
     "/equipment-assignments",
     "POST",

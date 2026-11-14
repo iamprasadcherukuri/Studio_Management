@@ -22,6 +22,7 @@
     "verify:financial-audit": "node scripts/verify-financial-audit.js",
     "verify:project-audit": "node scripts/verify-audit-fixes.js",
     "verify:audit-fixes": "node scripts/verify-audit-fixes.js",
+    "verify:upgrade-all": "node scripts/verify-upgrade-all.js",
     "audit:inventory": "node scripts/audit-project-inventory.js",
     "verify:deployment": "node scripts/check-deployment.js",
     "security:git": "node scripts/audit-git-secrets.js",

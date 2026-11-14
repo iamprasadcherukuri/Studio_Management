@@ -28,6 +28,7 @@ receipt_values AS (
 ),
 issues AS (
  SELECT 'booking_discount_lost' AS check_name,'booking' AS entity,id::text AS id FROM booking_totals WHERE inferred_booking_discount<0
+ UNION ALL SELECT 'booking_discount_metadata_mismatch','booking',id::text FROM booking_totals WHERE booking_discount_amount IS NOT NULL AND booking_discount_amount+payment_discounts<>discount_amount
  UNION ALL SELECT 'booking_amount_invalid','booking',id::text FROM booking_totals WHERE agreed_amount<0 OR total_amount<0 OR discount_amount<0 OR discount_value<0 OR total_amount-discount_amount<>agreed_amount
  OR (discount_type='NONE' AND (discount_value<>0 OR discount_amount<>0)) OR (discount_type='FIXED' AND discount_value<>discount_amount)
  OR (discount_type='PERCENTAGE' AND (discount_value>100 OR discount_amount<>round(total_amount*discount_value/100,2)))
@@ -82,6 +83,7 @@ SELECT jsonb_build_object(
   'custom_or_historical_package_prices',(SELECT count(*) FROM bookings b JOIN packages p ON p.id=b.package_id WHERE b.total_amount<>p.amount),
   'invoice_gross_representation_differs',(SELECT count(*) FROM invoices i JOIN bookings b ON b.id=i.booking_id WHERE i.status='Issued' AND (i.subtotal<>b.total_amount OR i.discount<>b.discount_amount)),
   'payments_without_receipt_snapshot',(SELECT count(*) FROM payments WHERE receipt_snapshot IS NULL),
+  'legacy_invoices_without_issue_snapshot',(SELECT count(*) FROM invoices WHERE financial_snapshot IS NULL),
   'payment_discounts_without_remarks',(SELECT count(*) FROM payments WHERE payment_discount_amount>0 AND nullif(trim(remarks),'') IS NULL),
   'future_dated_payments',(SELECT count(*) FROM payments WHERE date>(now() AT TIME ZONE 'Asia/Kolkata')::date),
   'future_dated_expenses',(SELECT count(*) FROM expenses WHERE date>(now() AT TIME ZONE 'Asia/Kolkata')::date),

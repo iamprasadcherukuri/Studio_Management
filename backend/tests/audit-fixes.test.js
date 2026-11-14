@@ -86,6 +86,7 @@ test("P07 password hashing inputs use a shared UTF-8 byte limit", () => {
       }),
     /UTF-8/,
   );
+  assert.throws(()=>parse('resetPassword',{current_password:password}),/UTF-8/);
 });
 test("F03 currency totals remain exact beyond JavaScript safe cent precision", () => {
   assert.equal(
