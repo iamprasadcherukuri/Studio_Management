@@ -33,6 +33,14 @@ const optionalDate = z.preprocess(
   (v) => (v === "" || v == null ? null : v),
   date.nullable(),
 );
+const mobile = z
+  .string()
+  .trim()
+  .regex(/^[0-9]{10}$/, "Enter exactly 10 digits");
+const optionalMobile = z.preprocess(
+  (v) => (v == null || v === "" ? null : v),
+  mobile.nullable(),
+);
 export const methods = ["Cash", "UPI", "Bank transfer", "Cheque"];
 export const paymentMethods = [
   "Cash",
@@ -53,12 +61,11 @@ export const stages = [
 ];
 export const schemas = {
   customers: z.object({
+    title: optional.optional(),
+    gender: optional.optional(),
     name: text,
-    mobile: z
-      .string()
-      .trim()
-      .regex(/^[+\d ()-]{7,20}$/, "Enter a valid mobile number"),
-    alternate_mobile: optional,
+    mobile,
+    alternate_mobile: optionalMobile,
     email: z
       .union([z.email(), z.literal("")])
       .nullish()
@@ -81,12 +88,16 @@ export const schemas = {
     staff_ids: z.array(id).default([]),
   }),
   payments: z.object({
+    payment_discount_type: z
+      .enum(["NONE", "FIXED", "PERCENTAGE"])
+      .default("NONE"),
+    payment_discount_value: money.default(0),
     booking_id: id,
     date,
     amount: money.refine((v) => v > 0, "Amount must be positive"),
     method: z.preprocess(
       (value) => (value === "Bank Transfer" ? "Bank transfer" : value),
-      z.enum(paymentMethods),
+      text,
     ),
     payment_type: z
       .enum(["Payment", "Advance", "Partial", "Installment", "Final"])
@@ -115,18 +126,34 @@ export const schemas = {
     ),
   expenses: z.object({
     date,
-    category: z.enum(["Salaries", "Equipment", "Printing", "Travel", "Other"]),
+    category: text,
     description: text,
     amount: money.refine((v) => v > 0, "Amount must be positive"),
     method: z.enum(methods),
     booking_id: optionalId,
     remarks: optional,
   }),
-  packages: z.object({ name: text, amount: money, description: optional }),
-  staff: z.object({ name: text, mobile: optional }),
+  packages: z.object({
+    name: text,
+    amount: money,
+    description: optional,
+    package_type: optional.optional(),
+  }),
+  staff: z.object({
+    name: text,
+    mobile: optionalMobile,
+    dob: date.refine(
+      (v) =>
+        v <=
+        new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }),
+      "Date of birth cannot be in the future",
+    ),
+    email: z.email().transform((v) => v.toLowerCase()),
+    address: z.string().trim().min(1, "Address is required").max(2000),
+  }),
   settings: z.object({
     name: text,
-    phone: z.string().max(30),
+    phone: z.union([mobile, z.literal("")]),
     email: z.union([z.email(), z.literal("")]),
     address: z.string().max(2000),
     tagline: z.string().trim().max(120).optional(),

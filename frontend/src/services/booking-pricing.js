@@ -30,3 +30,28 @@ export function previewBookingPrice(data) {
     return { ...data, agreed_amount: "", discount_amount: "" };
   }
 }
+export function previewPaymentDiscount(data, outstanding) {
+  const due = paise(outstanding),
+    value = paise(data.payment_discount_value || 0),
+    payment = paise(data.amount || 0),
+    type = data.payment_discount_type || "NONE";
+  if (type === "PERCENTAGE" && value > 10000n)
+    throw new Error("Percentage discount cannot exceed 100%");
+  if (type === "NONE" && value !== 0n)
+    throw new Error("Choose a discount type or set the discount value to zero");
+  const discount =
+    type === "PERCENTAGE"
+      ? (due * value + 5000n) / 10000n
+      : type === "FIXED"
+        ? value
+        : 0n;
+  if (discount > due)
+    throw new Error("Discount exceeds the outstanding balance");
+  if (payment > due - discount)
+    throw new Error("Payment exceeds the balance after discount");
+  return {
+    discount: money(discount),
+    due: money(due - discount),
+    balance: money(due - discount - payment),
+  };
+}

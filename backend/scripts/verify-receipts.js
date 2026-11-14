@@ -117,7 +117,7 @@ try {
   ).rows[0].today;
   const settings = {
     name: "Studio Photography",
-    phone: "+91 98765 43210",
+    phone: "9876543210",
     email: "info@studio.example",
     address: "Hyderabad, Telangana",
     tagline: "Photography & Videography Services",
@@ -335,9 +335,212 @@ try {
     ),
   );
   assert.notEqual(concurrent[0].receipt_number, concurrent[1].receipt_number);
+  const paymentBooking = await call("/bookings", "POST", bookingBody, 201);
+  const paymentInput = {
+    ...firstInput,
+    booking_id: paymentBooking.id,
+    amount: "10000",
+    payment_type: "Partial",
+    idempotency_key: randomUUID(),
+  };
+  const beforeDiscount = await call("/payments", "POST", paymentInput, 201);
+  const previousSnapshot = await call(`/payments/${beforeDiscount.id}/receipt`);
+  const discountedInput = {
+    ...paymentInput,
+    payment_discount_type: "FIXED",
+    payment_discount_value: "5000",
+    idempotency_key: randomUUID(),
+  };
+  for (const patch of [
+    { payment_discount_value: "35001" },
+    { payment_discount_type: "PERCENTAGE", payment_discount_value: "101" },
+    { amount: "31000" },
+    { method: "Unknown" },
+  ])
+    await call(
+      "/payments",
+      "POST",
+      { ...discountedInput, ...patch, idempotency_key: randomUUID() },
+      400,
+    );
+  assert.equal(
+    (await call(`/bookings/${paymentBooking.id}`)).agreed_amount,
+    "45000.00",
+  );
+  const discounted = await Promise.all(
+    [1, 2].map(() => call("/payments", "POST", discountedInput, 201)),
+  );
+  assert.equal(discounted[0].id, discounted[1].id);
+  const discountedReceipt = await call(`/payments/${discounted[0].id}/receipt`);
+  assert.equal(discountedReceipt.outstanding_before_discount, "35000.00");
+  assert.equal(discountedReceipt.payment_discount_amount, "5000.00");
+  assert.equal(discountedReceipt.discount_amount, "10000.00");
+  assert.equal(discountedReceipt.final_amount, "40000.00");
+  assert.equal(discountedReceipt.balance_due, "20000.00");
+  assert.equal(
+    (await call(`/bookings/${paymentBooking.id}`)).total_amount,
+    "50000.00",
+  );
+  assert.deepEqual(
+    await call(`/payments/${beforeDiscount.id}/receipt`),
+    previousSnapshot,
+  );
+  await call(
+    "/payments",
+    "POST",
+    { ...discountedInput, payment_discount_value: "4000" },
+    400,
+  );
+  await assert.rejects(
+    () =>
+      client.query(
+        "UPDATE payments SET payment_discount_amount=1 WHERE id=$1",
+        [discounted[0].id],
+      ),
+    /immutable/,
+  );
+  const percentage = await call(
+    "/payments",
+    "POST",
+    {
+      ...paymentInput,
+      amount: "1000",
+      payment_discount_type: "PERCENTAGE",
+      payment_discount_value: "10",
+      idempotency_key: randomUUID(),
+    },
+    201,
+  );
+  const percentReceipt = await call(`/payments/${percentage.id}/receipt`);
+  assert.equal(percentReceipt.payment_discount_amount, "2000.00");
+  assert.equal(percentReceipt.balance_due, "17000.00");
+  const discountPdf = await fetch(
+    base + `/payments/${discounted[0].id}/receipt/pdf`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  assert.equal(discountPdf.status, 200);
+  const discountBuffer = Buffer.from(await discountPdf.arrayBuffer());
+  assert.equal(
+    (discountBuffer.toString("latin1").match(/\/Type \/Page\b/g) || []).length,
+    1,
+  );
+  await writeFile(
+    new URL("../../test-results/payment-discount-receipt.pdf", import.meta.url),
+    discountBuffer,
+  );
+  await call(
+    "/payments",
+    "POST",
+    {
+      ...paymentInput,
+      payment_type: "Final",
+      amount: "17000",
+      idempotency_key: randomUUID(),
+    },
+    201,
+  );
+  assert.equal(
+    (await call(`/bookings/${paymentBooking.id}`)).outstanding,
+    "0.00",
+  );
+  await call(
+    `/payments/${discounted[0].id}/reversals`,
+    "POST",
+    {
+      date: today,
+      amount: "1000",
+      reason: "Payment discount refund test",
+      idempotency_key: randomUUID(),
+    },
+    201,
+  );
+  assert.equal(
+    (await call(`/bookings/${paymentBooking.id}`)).outstanding,
+    "1000.00",
+  );
+  assert.equal(
+    (await call(`/bookings/${paymentBooking.id}`)).discount_amount,
+    "12000.00",
+  );
+  const invoiced = await call(
+    "/bookings",
+    "POST",
+    {
+      ...bookingBody,
+      total_amount: "1000",
+      discount_type: "NONE",
+      discount_value: 0,
+    },
+    201,
+  );
+  const invoiceInput = {
+    booking_id: invoiced.id,
+    invoice_date: today,
+    due_date: today,
+    discount: "0",
+    items: [{ description: "Photography", quantity: "1", unit_price: "1000" }],
+    idempotency_key: randomUUID(),
+  };
+  const issued = await call("/invoices", "POST", invoiceInput, 201);
+  const lockedPayment = {
+    ...paymentInput,
+    booking_id: invoiced.id,
+    amount: "100",
+    payment_discount_type: "FIXED",
+    payment_discount_value: "100",
+    idempotency_key: randomUUID(),
+  };
+  await call("/payments", "POST", lockedPayment, 409);
+  assert.equal(
+    (await call(`/bookings/${invoiced.id}`)).agreed_amount,
+    "1000.00",
+  );
+  await call(`/invoices/${issued.id}/void`, "POST", {
+    reason: "Apply newly agreed payment discount",
+  });
+  await call("/payments", "POST", lockedPayment, 201);
+  const replacement = await call(
+    "/invoices",
+    "POST",
+    { ...invoiceInput, discount: "100", idempotency_key: randomUUID() },
+    201,
+  );
+  assert.equal(replacement.total_amount, "900.00");
+  const raceBooking = await call(
+    "/bookings",
+    "POST",
+    {
+      ...bookingBody,
+      total_amount: "1000",
+      discount_type: "NONE",
+      discount_value: 0,
+    },
+    201,
+  );
+  await Promise.all(
+    [1, 2].map(() =>
+      call(
+        "/payments",
+        "POST",
+        {
+          ...paymentInput,
+          booking_id: raceBooking.id,
+          amount: "100",
+          payment_discount_type: "PERCENTAGE",
+          payment_discount_value: "10",
+          idempotency_key: randomUUID(),
+        },
+        201,
+      ),
+    ),
+  );
+  assert.equal(
+    (await call(`/bookings/${raceBooking.id}`)).outstanding,
+    "620.00",
+  );
   await assert.rejects(() => migrate(client, schema, true), /Rollback refused/);
   console.log(
-    "PASS: no/percentage/fixed discounts, ₹50k−₹5k−₹5k−₹10k=₹30k, advance/partial/final/Card, zero balance, bad discounts/payments, duplicate retries, concurrent numbering, one-page PDFs, immutable history, legacy PAY receipts, branding validation and reversal disclosure.",
+    "PASS: booking/payment-time fixed and percentage discounts, outstanding-balance calculations, duplicate/concurrent submissions, atomic rollback, active invoice protection and replacement, final settlement, reversals, one-page PDFs and immutable receipts.",
   );
 } finally {
   if (server) {

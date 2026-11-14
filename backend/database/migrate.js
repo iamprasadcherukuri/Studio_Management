@@ -18,7 +18,6 @@ export async function migrate(client, schema = "studio", down = false) {
       "roles",
       "users",
       "customers",
-      "event_types",
       "packages",
       "staff",
       "bookings",
@@ -38,6 +37,9 @@ export async function migrate(client, schema = "studio", down = false) {
       return result;
     };
     const before = await counts();
+    const originalEvents = (
+      await client.query("SELECT id,name FROM event_types ORDER BY id")
+    ).rows;
     await client.query(
       "CREATE TABLE IF NOT EXISTS schema_migrations(version TEXT PRIMARY KEY,applied_at TIMESTAMPTZ NOT NULL DEFAULT now())",
     );
@@ -45,6 +47,10 @@ export async function migrate(client, schema = "studio", down = false) {
       "001_invoices_equipment",
       "002_payment_reversals",
       "003_receipt_design",
+      "004_master_management",
+      "005_staff_details",
+      "006_customer_title_gender",
+      "007_payment_discounts",
     ];
     const applied = new Set(
       (await client.query("SELECT version FROM schema_migrations")).rows.map(
@@ -95,6 +101,18 @@ export async function migrate(client, schema = "studio", down = false) {
     }
     if (JSON.stringify(before) !== JSON.stringify(await counts()))
       throw new Error("Existing row counts changed; migration rolled back");
+    const afterEvents = (
+      await client.query("SELECT id,name FROM event_types ORDER BY id")
+    ).rows;
+    if (
+      originalEvents.some(
+        (old) =>
+          !afterEvents.some(
+            (row) => row.id === old.id && row.name === old.name,
+          ),
+      )
+    )
+      throw new Error("Existing event records changed; migration rolled back");
     const invalid = await client.query(
       "SELECT conname FROM pg_constraint WHERE connamespace=$1::regnamespace AND NOT convalidated",
       [schema],

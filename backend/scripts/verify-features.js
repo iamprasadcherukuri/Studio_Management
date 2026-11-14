@@ -121,7 +121,7 @@ try {
   await call(
     `/bookings/${booking.id}`,
     "PUT",
-    { ...booking, agreed_amount: 101,total_amount:101, staff_ids: [] },
+    { ...booking, agreed_amount: 101, total_amount: 101, staff_ids: [] },
     409,
   );
   assert.equal(Number((await call("/dashboard")).metrics.received), 0);
@@ -169,7 +169,7 @@ try {
   const asset = {
     asset_code: "CAM-01",
     name: "Studio camera",
-    category: "Cameras",
+    category: "Camera",
     purchase_cost: "30000.00",
     condition: "Good",
   };

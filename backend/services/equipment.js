@@ -2,6 +2,7 @@ import Decimal from "decimal.js";
 import { pool, transaction } from "../database/pool.js";
 import { fail } from "./records.js";
 import { audit } from "./invoices.js";
+import { validateRecordMasters } from "./master-values.js";
 export const equipmentSelect = `SELECT e.*,CASE WHEN e.status='Available' AND EXISTS(SELECT 1 FROM equipment_assignments a WHERE a.equipment_id=e.id AND a.status='Active' AND a.assigned_date<=CURRENT_DATE) THEN 'Assigned' ELSE e.status END AS availability FROM equipment e`;
 async function lockEquipment(c, id) {
   const row = (
@@ -30,13 +31,16 @@ export async function equipmentDetails(id) {
 }
 export async function saveEquipment(data, user, id) {
   return transaction(async (c) => {
+    let previous = null;
     if (id) {
       const old = await lockEquipment(c, id);
+      previous = old;
       if (old.status === "Retired")
         throw fail(
           "Retired equipment is retained as history and cannot be edited",
         );
     }
+    await validateRecordMasters(c, "equipment", data, previous);
     const keys = Object.keys(data);
     const values = Object.values(data);
     const query = id

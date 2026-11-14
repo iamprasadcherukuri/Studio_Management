@@ -56,7 +56,11 @@ export async function recordReceipt(client, id, recorded = false) {
   ).rows[0].paid;
   const gross = new Decimal(row.agreed_amount).plus(row.discount_amount);
   const snapshot = {
-    version: 1,
+    version: 2,
+    payment_discount_type: row.payment_discount_type,
+    payment_discount_value: fixed(row.payment_discount_value),
+    payment_discount_amount: fixed(row.payment_discount_amount),
+    outstanding_before_discount: fixed(row.payment_discount_basis),
     receipt_number: row.receipt_number || legacyReceiptNumber(row.id),
     payment_id: row.id,
     booking_id: row.booking_id,

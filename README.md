@@ -342,7 +342,7 @@ Review the complete diff before staging because this workspace also includes the
 ```powershell
 git diff --check
 git diff --stat
-git add README.md backend frontend
+git add README.md backend frontend shared
 git diff --cached --name-only
 # Confirm no environment files, backups or vercel.json appear before committing.
 git commit -m "Add payment receipts with discounts and preserved receipt details"
@@ -350,3 +350,174 @@ git push origin HEAD
 ```
 
 After explicit production approval: verify a production backup, apply the reviewed upgrades to Supabase, then deploy Render with its existing verified TLS/database/CORS environment. Confirm Render `/api/health` is OK before redeploying Vercel. Keep VITE_API_URL set to the Render origin and use the Vercel build settings above. Smoke-test login, discounted booking, a saved payment and receipt preview/download/print. No Git push, Render/Vercel deployment or production migration was performed for this implementation.
+
+## Settings ? Master Management
+
+Migration `004_master_management` adds exactly two master tables: `master_entity` and `master_entity_value`. Seven entities and 53 default values are seeded, including the 21 requested album types in display order. Existing custom album types/sizes, payment methods, event types, expense categories and equipment categories are imported without changing saved transactional text. Additional imported values can increase the counts. Master entities/values have identity keys, unique generated codes, active status, display order, timestamps and non-cascading foreign keys/indexes.
+
+The implementation lives in `backend/routes/masters.js`, `backend/services/master-values.js`, `shared/master-code.mjs` and `frontend/src/pages/MasterManagement.jsx`. Existing controller/lookups, record/equipment services, validation, Settings/forms and category filters are extended. Installer generation, migration runner and regression scripts include version 004. No additional Markdown documentation was created.
+
+Settings ? Master Management provides summary cards, entity search/selection, add/edit/status actions, searchable and paginated values, active/inactive filtering, display order, read-only generated codes, notifications and responsive tables. Admin writes reuse JWT authentication and audit_logs; staff may read active master entities/values only. There is no permanent-delete API. Concurrent duplicate submissions are rejected by database unique constraints with a meaningful HTTP 409.
+
+### Compatibility and code generation
+
+`shared/master-code.mjs` supplies identical frontend/backend code generation: trim, uppercase, replace separator runs with underscores, trim surrounding underscores, and validate a nonempty code of at most 100 characters. Names may contain up to 150 characters. The backend generates codes itself; PostgreSQL also generates/checks insertion codes and protects saved codes on updates. Names containing no ASCII letters or digits cannot produce a code and return a validation error; no random suffix is appended. Edits preserve codes.
+
+Dropdown integration covers Albums (type/size), Payments (method), Bookings (event), Expenses (category), Equipment (category), and Packages (new optional package_type text field). PAYMENT_TYPE means payment method; the receipt's Advance/Partial/Final purpose remains separate. Workflow statuses, security roles, discount calculation types and expense payment methods retain their existing controlled rules.
+
+Legacy event_types rows/IDs remain as a compatibility bridge for bookings and reports; missing seeded/new event options are added to that existing table. No existing event is renamed or renumbered. Stable stored_value, legacy_aliases and legacy_event_type_id fields in master_entity_value preserve original spellings and IDs. Editing a master display name updates dropdown labels without rewriting transaction history. New records accept active choices only. Editing an existing record may retain its inactive saved choice; switching to another choice requires it to be active. Existing transaction column types and receipt snapshots are preserved. Blank historical package types remain blank. Backend master validation replaces fixed payment/category CHECK lists so administrator-defined choices work; direct SQL writers must use the application services or supply equivalent validation.
+
+### REST API
+
+All routes require JWT authentication. Collection responses use `{ data, total, page, limit }`; the entity collection additionally returns admin summary counts. Singular/write responses return the saved record. Errors use the existing `{ error }` format.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET / POST | `/api/master/entities` | List / create entities |
+| GET / PUT | `/api/master/entities/:id` | Read / edit entity |
+| PATCH | `/api/master/entities/:id/status` | Activate/deactivate entity |
+| GET / POST | `/api/master/entities/:id/values` | List / create values |
+| GET | `/api/master/values?entityCode=ALBUM_TYPE` | Dropdown values |
+| PUT | `/api/master/values/:id` | Edit value |
+| PATCH | `/api/master/values/:id/status` | Activate/deactivate value |
+
+Writes accept `{ name, description, display_order, is_active }`; entity_name/value_name are also accepted for the corresponding name. Codes are generated, never editable. Status bodies contain `{ is_active: true/false }`. Collection query options: search, status (all/active/inactive), page, limit (1–100), sort (display_order/name/code), direction (asc/desc). Staff always receive effective active choices regardless of status query. Existing `/api/lookups` adds master_values and returns active event dropdown mappings without removing its other fields.
+
+### Migration, verification and deployment
+
+The reviewed SQL is `backend/database/upgrade_004_master_management.sql`, with source `backend/database/migrations/004_master_management.up.sql`. The migration was tested in disposable local schemas, then applied to the local studio database after explicit user approval and a checksum/archive-verified backup. It has NOT been applied to Supabase. Existing transaction counts and event IDs/names are checked by the runner; integration fixtures verify historical album rows remain identical. Repeat runner execution skips applied versions; the standalone upgrade refuses an already-applied version without changing records.
+
+Automatic rollback of master configuration is intentionally refused by the down script. Prefer a forward correction. If a full rollback is required, restore the verified pre-004 backup into a separate database, compare and reconcile transactions created since backup, then review an application/database switch. Do not run destructive SQL or overwrite the current database to remove configured masters.
+
+```powershell
+npm test -w backend
+npm run verify:masters -w backend
+npm run verify -w backend
+npm run verify:features -w backend
+npm run verify:receipts -w backend
+npm run verify:browser -w backend
+# From backend, optionally validate the complete fresh-install SQL:
+# node scripts/verify-install.js
+npm run build -w frontend
+```
+
+Tests cover seeds/custom imports, code generation/parity, duplicate/concurrent creation, immutable codes, renamed labels, active/inactive choices, search/order/pagination, admin/staff access, custom album/payment choices, legacy edits, event mappings, audit logs, PDF receipts and application regressions. Browser verification exercises Master Management alongside the existing modules; its ignored screenshot is `test-results/master-management.png`.
+
+For production, first approve and verify a Supabase backup and inspect schema_migrations. Apply only missing upgrades in order 002 ? 003 ? 004 (001 must already exist); never run install_all.sql against an existing schema. Fresh installations now contain 24 tables plus the ledger view. The new backend health check requires the master schema. Deploy Render after the approved migration, confirm `/api/health`, then rebuild Vercel with the existing VITE_API_URL. Keep the repository's `shared/` directory available to both build contexts; do not deploy an isolated frontend/backend folder that omits it. Smoke-test a custom album type, a payment method, an inactive historical record and receipt download. No production migration, Git push or deployment was performed.
+
+## Staff profile details and mobile validation
+
+Migration 005 (`backend/database/upgrade_005_staff_details.sql`) adds DOB, email and address to staff. These fields are required by the API and staff form on create/edit; existing rows retain NULL until their profile is completed. DOB must be a valid calendar date no later than today in India. Staff tables show the new details, and event-assignment lookups retain their prior fields without exposing these additional profile details.
+
+Customer mobile, alternate mobile, staff mobile and studio contact phone now accept exactly 10 ASCII digits when supplied, enforced by backend validation and numeric phone inputs with maxlength/pattern constraints. Customer primary mobile stays required; previously optional contact fields remain optional. Country prefixes, spaces, letters and shorter/longer values are rejected when saving. Existing contact values are not automatically changed.
+
+Migration 005 was applied locally after approval and a verified backup; Supabase remains unchanged. Apply the reviewed upgrade after 004 only after approving a production backup/migration. The fresh installer and migration runner include version 005; rollback refuses to discard populated staff details. Unit tests cover missing/invalid profile fields, future dates, 9/11-digit numbers, letters, country prefixes and optional blank numbers. API/browser checks cover staff save/update and the new form inputs.
+
+## Additional discounts when receiving payments
+
+Payments ? Add payment now includes Additional discount type (NONE/FIXED/PERCENTAGE), Additional discount value, and a live balance preview. The discount applies to the outstanding balance immediately before that payment; percentages use that balance, not the original package price. Example: 35,000 outstanding - 5,000 additional discount - 10,000 received = 20,000 remaining.
+
+The API locks the booking, checks duplicate submission keys, computes the discount with decimal half-up paise rounding, reduces the agreed amount and increases the cumulative booking discount while preserving the gross price. It saves the discount metadata, cash payment, receipt snapshot and audit records in one transaction. Invalid payment methods, overpayments, excessive discounts and failed inserts roll back the discount too. Multiple accumulated discounts are stored as the booking's cumulative fixed discount; each payment preserves its own original type/value/basis/amount. New request fields are payment_discount_type and payment_discount_value; older clients default to NONE/0.
+
+Receipt PDFs display the cumulative discount and the separate payment-time discount with its original outstanding balance. Earlier issued receipts remain immutable. Cash reports include only received money; discounts are not cash receipts or expenses. Reversing a payment refunds cash and restores that amount to the outstanding balance; it does not undo an agreed discount. A Final payment must settle the balance after discount. Zero-cash discount-only entries are not supported by the existing positive-payment workflow.
+
+An issued invoice locks the booking total. Void it through the existing invoice workflow before applying a payment discount, then issue a replacement invoice matching the revised agreed amount. Neither issued invoices nor historical receipts are silently rewritten.
+
+Migration 007 (`backend/database/upgrade_007_payment_discounts.sql`) adds four payment discount metadata fields, consistency checks and an immutability trigger. It was tested in disposable schemas and applied locally after explicit approval and a verified backup. Existing payments default to no additional discount. Supabase remains unchanged; approve a production backup and apply this reviewed upgrade after 006 before deploying the updated backend. Rollback refuses to discard nonzero payment discounts. Run npm test, verify:receipts, verify:features, verify:browser and the frontend build using the workspace commands above.
+
+## Financial logic audit — 14 November 2026
+
+Scope: existing amounts, discounts, refunds/reversals, invoices/receipts, expenses, dashboard, reports, constraints and frontend previews. This was an audit, not a data repair. No application financial formulas, existing records or production data were changed. New tools are `backend/database/financial_audit.sql`, `backend/scripts/audit-financials.js` and `backend/scripts/verify-financial-audit.js` plus their npm scripts. Results are written only to ignored test-results JSON files.
+
+### Confirmed findings
+
+| ID | Severity | Reproduction | Recommended correction |
+| --- | --- | --- | --- |
+| F01 | High | A booking with 4,980 of issued payment discounts accepts an edit setting its cumulative discount to zero. Those immutable payment discounts remain on payment rows but disappear from the current agreed amount/balance. | Preserve granted payment discounts separately when editing the booking discount; reject cumulative discounts below issued payment discounts unless an explicit correction workflow is approved. Update the form to distinguish booking and cumulative discounts. |
+| F02 | High against historical-PDF requirement | Issue an invoice after receiving 100; later receive 200. Downloaded invoice PDF changes paid from 100 to 300 and balance from 900 to 700, using invoiceSelect's live ledger values. Issued subtotal/discount/net stay fixed. | Preserve invoice issue-time paid/balance values for the original document, retain separately labeled current collection status, and handle historical invoices explicitly rather than inventing old snapshots. A schema change would require separate review/approval. |
+| F03 | Medium/capacity | Two valid 6,000,000,000 invoices make `/api/feature-summary` return HTTP 400 because its aggregate is cast to NUMERIC(12,2), which cannot exceed 9,999,999,999.99. | Use unconstrained/wider NUMERIC for aggregate totals; retain bounded types on individual records. |
+
+These were reproduced in a disposable local schema, not against existing records. The audit runner distinguishes successful consistency checks from confirmed defects; an exit code 0 for the fixture runner means the audit completed and its reproductions were verified, not that the application has no financial defects.
+
+### Actual financial columns and sources
+
+The inspected database exposes 22 numeric columns, including one ledger-view amount and quantities/percentage values:
+
+| Relation | Numeric columns |
+| --- | --- |
+| packages | amount |
+| bookings | agreed_amount, discount_amount, discount_value, generated total_amount |
+| payments | amount, payment_discount_value, payment_discount_amount, payment_discount_basis |
+| payment_reversals | amount |
+| payment_ledger (view) | amount, signed positive payment / negative reversal |
+| invoices | subtotal, discount, tax_amount, total_amount |
+| invoice_items | quantity (12,3), unit_price, line_total |
+| expenses | amount |
+| albums | printing_cost |
+| equipment | purchase_cost |
+| equipment_maintenance | maintenance_cost |
+
+Stored monetary values use NUMERIC(12,2); discount percentages also use a two-decimal numeric value. Main calculations are in services/booking-pricing.js, services/payment-discount.js, services/records.js, services/payment-reversals.js, services/invoices.js, services/receipt-snapshots.js, services/equipment.js and controllers/api.js. PDFs use services/pdf.js and services/receipt-pdf.js. Frontend previews are in services/booking-pricing.js, App.jsx and components/PaymentDiscountPreview.jsx; invoice entry is in pages/Enhancements.jsx. Decimal/BigInt previews and server PostgreSQL/Decimal calculations use half-up paise rounding; invoice lines are rounded before subtotaling.
+
+### Dependency map
+
+```text
+packages.amount -- explicit selection-time copy --> bookings gross (editable custom amount)
+bookings gross - cumulative discount ------------> bookings.agreed_amount
+payment-time discount -- locked transaction -----> increases cumulative discount / reduces agreed amount
+payments.amount - payment_reversals.amount ------> payment_ledger (net cash receipts)
+booking agreed amount - net cash ----------------> booking outstanding
+invoice_items -- round lines / sum / discount ---> invoice net (must equal booking agreed amount at issue)
+invoice snapshots + live ledger -----------------> invoice UI/PDF paid and balance (F02)
+booking/customer/studio + saved payment ---------> immutable receipt figures, plus labeled current reversal status
+expenses.amount --------------------------------> paid cash outflow
+net ledger - paid expenses ----------------------> net cash balance (not earned revenue/accounting profit)
+ledger + booking totals -------------------------> dashboard / reports / customer booking history
+album printing / equipment purchase / maintenance estimates --> no automatic cash expense
+maintenance -- record/link paid expense ---------> expenses, counted once
+```
+
+Booking total_amount is generated as agreed_amount + cumulative discount_amount. Cumulative discount includes both the original booking discount and granted payment discounts; the original booking portion can only be inferred as current cumulative discount minus SUM(payment_discount_amount). F01 means that inference can become negative after unsafe edits. Payment discounts reduce the contracted balance, never cash received. Refunds reverse cash and retain discounts. The ledger models all saved offline payments as received; there is no separate gateway/cheque-clearing/success-status workflow. Advance/Partial/Final is a payment purpose, not a mutable settlement status.
+
+Package master price changes do not overwrite saved booking totals. Explicit package reselection loads its current amount; manual/custom gross pricing remains supported. There are no separate package-discount, package-final-price or additional-charge columns. Any additional charges are currently included manually in the booking gross; their separate allocation cannot be reconstructed. Differences from the current package master price are informational, not automatically errors. Invoice validation guarantees matching net totals, but permits different invoice gross/discount presentation if the net agrees; the SQL audit highlights that as information for business-policy review.
+
+### API/report coverage and date semantics
+
+| API / report | Financial basis |
+| --- | --- |
+| GET /api/bookings, /api/bookings/:id | Saved gross/cumulative discount/net; all-time signed ledger for paid/outstanding |
+| POST/PUT /api/bookings | Pricing, paid floor, cancellation guards, invoice lock; F01 applies to edit discount |
+| POST /api/payments | Positive amount, balance cap, fixed/percentage discount on current outstanding, exact Final settlement, atomic receipt/audit, submission-key retry |
+| GET/POST /api/payments/:id/reversals | Positive bounded refund, payment-date through India-today, retry key and booking/payment locks |
+| GET /api/payments/:id/receipt and /pdf | Saved original figures and original payment date; current reversal information is separately labeled |
+| GET/POST /api/invoices and GET /api/invoices/:id, /pdf | Issued document net and snapshots; paid/balance from live net booking cash; voided invoices excluded from active totals |
+| GET /api/dashboard | All-time net receipts, active-booking outstanding, paid expenses; six monthly buckets use payment/reversal dates and expense dates |
+| GET /api/feature-summary | Active invoice totals/outstanding, equipment counts; aggregate-capacity issue F03 |
+| GET /api/customers/:id/history | Booking-level totals with net paid/outstanding, not a detailed customer transaction statement |
+| reports: receipts, daily, monthly, yearly | Payment dates and reversal dates; refunds can make a period negative |
+| reports: expenses, categories | Expense date; general and booking-linked paid expenses both included |
+| reports: summary | Cash by payment/reversal/expense date; net cash is not profit |
+| reports: bookings, outstanding | Event-date filter, with all-time net receipts for each booking; outstanding excludes cancelled bookings |
+| reports: customers | Bookings selected by event date; booked_amount includes recorded cancelled bookings, so it is not the dashboard active-outstanding metric |
+| reports: albums | Actual delivery date, otherwise expected delivery date; printing_cost is an estimate, not an expense |
+
+Dashboard pending subtracts all net receipts from active booking values. This reconciles under the existing rule that a cancelled booking has zero net cash; the audit SQL flags any imported/direct-SQL cancelled booking with retained cash. Date boundaries use PostgreSQL date/CURRENT_DATE for charts/overdue status, while reversal validation uses India today. Month/day boundary differences should be aligned if a cloud database session uses a different timezone. Future-dated payments/expenses are accepted by current validation and included in all-time totals; confirm the intended posting-date policy before changing it.
+
+Expenses represent paid outflows only; there are no expense paid/pending/status columns or salary payroll schedules. Equipment purchase_cost, maintenance_cost and album printing_cost are not double-counted as cash. Maintenance creates/links one matching Equipment expense; duplicate linking and edits/deletion of linked expenses are blocked by constraints/triggers. General studio expenses are not treated as booking-specific costs. Tax is explicitly disabled (tax_amount must be zero).
+
+Not implemented: dedicated discount report, package-wise revenue report, earned-revenue/profit-and-loss report, separate expense-payable report, detailed customer ledger statement, and mandatory structured payment-discount reason (remarks are optional). Existing net-cash reporting is not an accounting P&L. No missing reports or duplicate financial modules were created by this audit.
+
+### Reconciliation and evidence
+
+`financial_audit.sql` is a repeatable-read, read-only transaction. It aggregates payments, refunds, payment discounts and booking-linked expenses separately before joining to bookings, preventing one-to-many multiplication. It checks discount composition, ledger/source equality, outstanding/overpayments, cancelled cash, receipt arithmetic, invoice/item totals/rounding, linked-maintenance costs, invalid amounts, duplicate keys, orphans and financial references. Possible duplicate bank references are informational because repeated installment details can be legitimate. It does not compare historical receipt net values with today's booking net, because those snapshots are intentionally historical.
+
+The local source audit found zero violations. Its reconciliation at audit time: gross bookings 100,000; original cash receipts 50,000; reversals 40,000; net receipts 10,000; expenses 0; outstanding 90,000. One existing legacy payment has no receipt snapshot; its first receipt access reconstructs and labels historical details, so exact unavailable original branding/discount history cannot be guaranteed. No receipt was materialized by the read-only audit.
+
+The fixture audit completed 43 consistency checks and reproduced F01/F02/F03. It verified package-price isolation, custom gross, booking/payment discounts, advance/partial/final payments, retries, refunds, invalid zero/negative/overpayments, protected cancellations, cash/report/dashboard/history reconciliation, period grouping, invoice half-up line rounding, invoice total protection, immutable receipt figures and single expense posting. Source table counts and row fingerprints matched before and after fixture execution. Existing records were neither repaired nor rewritten. Results: ignored test-results/financial-audit-local.json and financial-audit-fixtures.json.
+
+```powershell
+npm run audit:financial -w backend
+npm run verify:financial-audit -w backend
+```
+
+The local runner refuses remote/Supabase URLs. The SQL file can be reviewed separately for read-only execution on another database; no cloud audit, migration, deployment, push or financial data repair was performed. Monetary totals in audit JSON are strings to preserve decimal precision. Frontend currency display still converts to Number and the dashboard subtracts cash using Number; values beyond safe cent precision remain an additional scaling risk even though authoritative SQL amounts are exact.

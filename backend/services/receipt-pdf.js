@@ -237,7 +237,9 @@ export function renderReceiptPdf(data) {
       const totals = [
         ["Total Amount", data.gross_amount, null],
         [
-          "Discount" +
+          (new Decimal(data.payment_discount_amount || 0).gt(0)
+            ? "Discount (total)"
+            : "Discount") +
             (new Decimal(data.discount_amount).gt(0)
               ? " (" + data.discount_percent + "%)"
               : ""),
@@ -297,9 +299,29 @@ export function renderReceiptPdf(data) {
           data.amount_in_words || amountInWords(data.current_payment),
         ],
       ];
+      if (new Decimal(data.payment_discount_amount || 0).gt(0))
+        details.splice(3, 0, [
+          "Payment Discount",
+          (data.payment_discount_type === "PERCENTAGE"
+            ? data.payment_discount_value + "%: "
+            : "") +
+            currency(data.payment_discount_amount) +
+            " on " +
+            currency(data.outstanding_before_discount),
+        ]);
       let yy = 553;
       for (const [label, value] of details) {
-        const rowHeight = label === "Amount in Words" ? 48 : 25;
+        const extraDiscount = new Decimal(data.payment_discount_amount || 0).gt(
+          0,
+        );
+        const rowHeight =
+          label === "Amount in Words"
+            ? extraDiscount
+              ? 43
+              : 48
+            : label === "Payment Discount"
+              ? 20
+              : 25;
         text(label, 21, yy, 107, 10, false, ink, rowHeight - 3);
         text(":", 130, yy, 10, 10, false, ink, 20);
         text(

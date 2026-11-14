@@ -603,6 +603,12 @@ export function EquipmentPage({ ui }) {
     const timer = setTimeout(load, 180);
     return () => clearTimeout(timer);
   }, [tab, page, search, category, status]);
+  useEffect(() => {
+    api
+      .get("/lookups")
+      .then((r) => setLookups((previous) => ({ ...previous, ...r.data })))
+      .catch((e) => setError(message(e)));
+  }, []);
   async function start(kind, row) {
     setError("");
     setDetail(null);
@@ -813,9 +819,13 @@ export function EquipmentPage({ ui }) {
               }}
             >
               <option value="">All categories</option>
-              {categories.map((x) => (
-                <option key={x}>{x}</option>
-              ))}
+              {(lookups.master_values || [])
+                .filter((v) => v.entity_code === "EQUIPMENT_CATEGORY")
+                .map((x) => (
+                  <option key={x.entity_value_id} value={x.stored_value}>
+                    {x.value_name}
+                  </option>
+                ))}
             </select>
             <select
               aria-label="Equipment status"

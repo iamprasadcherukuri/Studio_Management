@@ -2,6 +2,8 @@ import { transaction } from "../database/pool.js";
 import { recordReceipt } from "./receipt-snapshots.js";
 import { bookingPricing } from "./booking-pricing.js";
 import Decimal from "decimal.js";
+import { validateRecordMasters } from "./master-values.js";
+import { paymentDiscount } from "./payment-discount.js";
 export const definitions = {
   customers: {
     table: "customers",
@@ -17,7 +19,8 @@ export const definitions = {
   },
   payments: {
     table: "payments",
-    search: "c.name || ' ' || t.method || ' ' || coalesce(t.reference,'') || ' ' || coalesce(t.receipt_number,'PAY-' || lpad(t.id::text,greatest(5,length(t.id::text)),'0'))",
+    search:
+      "c.name || ' ' || t.method || ' ' || coalesce(t.reference,'') || ' ' || coalesce(t.receipt_number,'PAY-' || lpad(t.id::text,greatest(5,length(t.id::text)),'0'))",
     join: "JOIN bookings b ON b.id=t.booking_id JOIN customers c ON c.id=b.customer_id",
     select:
       "t.*,COALESCE(t.receipt_number,'PAY-'||lpad(t.id::text,greatest(5,length(t.id::text)),'0')) AS receipt_number,c.name AS customer_name,b.agreed_amount,COALESCE((SELECT sum(amount) FROM payment_reversals WHERE payment_id=t.id),0)::numeric(12,2) AS reversed_amount,(t.amount-COALESCE((SELECT sum(amount) FROM payment_reversals WHERE payment_id=t.id),0))::numeric(12,2) AS net_amount",
@@ -80,6 +83,10 @@ export async function writeRecord(kind, data, user, recordId) {
           oldDate !== data.date ||
           old.method !== data.method ||
           old.payment_type !== data.payment_type ||
+          old.payment_discount_type !== data.payment_discount_type ||
+          !new Decimal(old.payment_discount_value).eq(
+            data.payment_discount_value,
+          ) ||
           (old.reference || null) !== data.reference ||
           (old.remarks || null) !== data.remarks
         )
@@ -87,19 +94,55 @@ export async function writeRecord(kind, data, user, recordId) {
         return old;
       }
       const { rows } = await client.query(
-        "SELECT status,agreed_amount-COALESCE((SELECT sum(amount) FROM payment_ledger WHERE booking_id=b.id),0) AS due FROM bookings b WHERE id=$1",
+        "SELECT b.*,agreed_amount-COALESCE((SELECT sum(amount) FROM payment_ledger WHERE booking_id=b.id),0) AS due FROM bookings b WHERE id=$1",
         [data.booking_id],
       );
       if (!rows[0]) throw fail("Booking not found", 404);
       if (rows[0].status === "cancelled")
         throw fail("Cannot receive payments for a cancelled booking");
-      if (data.amount > Number(rows[0].due))
+      const discount = paymentDiscount(
+        rows[0].due,
+        data.payment_discount_type,
+        data.payment_discount_value,
+      );
+      if (new Decimal(data.amount).gt(discount.remaining))
         throw fail("Payment exceeds the outstanding balance");
       if (
         data.payment_type === "Final" &&
-        !new Decimal(data.amount).eq(rows[0].due)
+        !new Decimal(data.amount).eq(discount.remaining)
       )
         throw fail("A final payment must settle the outstanding balance");
+      values.payment_discount_amount = discount.amount;
+      values.payment_discount_basis = discount.basis;
+      if (new Decimal(discount.amount).gt(0)) {
+        if (
+          (
+            await client.query(
+              "SELECT id FROM invoices WHERE booking_id=$1 AND status='Issued'",
+              [data.booking_id],
+            )
+          ).rowCount
+        )
+          throw fail(
+            "Void the active invoice before applying a payment discount, then issue a replacement invoice.",
+            409,
+          );
+        const cumulative = new Decimal(rows[0].discount_amount)
+          .plus(discount.amount)
+          .toFixed(2);
+        await client.query(
+          "UPDATE bookings SET agreed_amount=agreed_amount-$1,discount_amount=$2,discount_type='FIXED',discount_value=$2,updated_at=now() WHERE id=$3",
+          [discount.amount, cumulative, data.booking_id],
+        );
+        await client.query(
+          "INSERT INTO audit_logs(user_id,action,entity,entity_id) VALUES($1,$2,'bookings',$3)",
+          [
+            user.id,
+            `payment discount ${discount.amount}; basis ${discount.basis}; submission ${data.idempotency_key}`,
+            data.booking_id,
+          ],
+        );
+      }
       values.created_by = user.id;
     }
     if (kind === "bookings" && recordId) {
@@ -117,6 +160,14 @@ export async function writeRecord(kind, data, user, recordId) {
           "A paid booking cannot be cancelled; resolve its payments first",
         );
     }
+    const previous = recordId
+      ? (
+          await client.query(`SELECT * FROM ${table} WHERE id=$1 FOR UPDATE`, [
+            recordId,
+          ])
+        ).rows[0]
+      : null;
+    await validateRecordMasters(client, kind, values, previous);
     const keys = Object.keys(values);
     const params = Object.values(values);
     const sql = recordId

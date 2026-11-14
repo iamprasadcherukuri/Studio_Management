@@ -17,6 +17,9 @@
     "verify": "node scripts/verify.js",
     "verify:features": "node scripts/verify-features.js",
     "verify:receipts": "node scripts/verify-receipts.js",
+    "verify:masters": "node scripts/verify-masters.js",
+    "audit:financial": "node scripts/audit-financials.js",
+    "verify:financial-audit": "node scripts/verify-financial-audit.js",
     "verify:deployment": "node scripts/check-deployment.js",
     "security:git": "node scripts/audit-git-secrets.js",
     "verify:browser": "node scripts/browser-verify.js"

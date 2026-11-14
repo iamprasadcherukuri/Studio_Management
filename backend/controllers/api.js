@@ -9,6 +9,7 @@ import { auth, admin } from "../middleware/auth.js";
 import { parse } from "../services/validation.js";
 import { definitions, writeRecord, fail } from "../services/records.js";
 import { studioSettings, saveStudioSettings } from "../services/branding.js";
+import { masterOptions } from "../services/master-values.js";
 import {
   reversePayment,
   reversalHistory,
@@ -24,7 +25,7 @@ api.get("/health", async (req, res) => {
   res.set("Cache-Control", "no-store");
   try {
     await pool.query({
-      text: "SELECT l.amount,l.booking_id,p.receipt_number,p.receipt_snapshot,b.total_amount,s.logo_asset_id FROM payment_ledger l CROSS JOIN payments p CROSS JOIN bookings b CROSS JOIN studio_settings s LIMIT 0",
+      text: "SELECT l.amount,l.booking_id,p.receipt_number,p.receipt_snapshot,b.total_amount,s.logo_asset_id,v.value_code,k.package_type FROM payment_ledger l CROSS JOIN payments p CROSS JOIN bookings b CROSS JOIN studio_settings s CROSS JOIN master_entity_value v CROSS JOIN master_entity e CROSS JOIN packages k LIMIT 0",
       query_timeout: 5000,
     });
     res.json({ status: "OK", service: "Studio Management API" });
@@ -98,6 +99,38 @@ api.post("/auth/login", limited, async (req, res) => {
   });
 });
 api.use(auth);
+api.get("/bookings/:id", async (req, res) => {
+  if (
+    !/^[1-9][0-9]{0,9}$/.test(req.params.id) ||
+    Number(req.params.id) > 2147483647
+  )
+    throw fail("Invalid booking ID");
+  const def = definitions.bookings;
+  const { rows } = await pool.query(
+    `SELECT ${def.select},c.mobile AS customer_mobile,c.email AS customer_email,EXISTS(SELECT 1 FROM invoices i WHERE i.booking_id=t.id AND i.status='Issued') AS has_active_invoice,ARRAY(SELECT s.name FROM booking_staff bs JOIN staff s ON s.id=bs.staff_id WHERE bs.booking_id=t.id ORDER BY s.name,s.id) AS staff_names FROM bookings t ${def.join} WHERE t.id=$1`,
+    [req.params.id],
+  );
+  if (!rows[0]) throw fail("Booking not found", 404);
+  res.set("Cache-Control", "no-store").json(rows[0]);
+});
+api.get("/customers/search", async (req, res) => {
+  const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  if (
+    q.length > 150 ||
+    (req.query.q != null && typeof req.query.q !== "string")
+  )
+    throw fail("Search must be at most 150 characters");
+  const selected = req.query.id;
+  if (selected != null && !/^[1-9][0-9]{0,9}$/.test(String(selected)))
+    throw fail("Invalid customer ID");
+  if (selected != null && Number(selected) > 2147483647)
+    throw fail("Invalid customer ID");
+  const { rows } = await pool.query(
+    `SELECT id AS customer_id,name AS customer_name,mobile AS mobile_number FROM customers WHERE ${selected != null ? "id=$1" : "(strpos(lower(name),lower($1))>0 OR strpos(mobile,$1)>0)"} ORDER BY lower(name),id LIMIT 10`,
+    [selected ?? q],
+  );
+  res.set("Cache-Control", "no-store").json({ data: rows });
+});
 api.get("/auth/me", (req, res) => res.json(req.user));
 api.get("/payments/:id/reversals", admin, async (req, res) =>
   res.json({ data: await reversalHistory(req.params.id) }),
@@ -137,11 +170,14 @@ api.get("/lookups", async (req, res) => {
     customers: "SELECT id,name FROM customers ORDER BY name",
     bookings:
       "SELECT b.id,c.name || ' · ' || e.name || ' · #' || b.id AS name FROM bookings b JOIN customers c ON c.id=b.customer_id JOIN event_types e ON e.id=b.event_type_id ORDER BY b.id DESC",
-    event_types: "SELECT * FROM event_types ORDER BY id",
+    event_types:
+      "SELECT v.legacy_event_type_id AS id,v.value_name AS name FROM master_entity_value v JOIN master_entity e USING(entity_id) WHERE e.entity_code='EVENT_TYPE' AND e.is_active AND v.is_active ORDER BY v.display_order,v.entity_value_id",
     packages: "SELECT * FROM packages ORDER BY name",
-    staff: "SELECT * FROM staff WHERE active=true ORDER BY name",
+    staff:
+      "SELECT id,user_id,name,mobile,active FROM staff WHERE active=true ORDER BY name",
   }))
     result[key] = (await pool.query(sql)).rows;
+  result.master_values = await masterOptions();
   res.json(result);
 });
 api.get("/dashboard", async (req, res) => {

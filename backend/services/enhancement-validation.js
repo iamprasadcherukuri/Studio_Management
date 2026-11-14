@@ -67,15 +67,7 @@ export const enhancementSchemas = {
       .max(50)
       .transform((v) => v.toUpperCase()),
     name: text,
-    category: z.enum([
-      "Cameras",
-      "Lenses",
-      "Lighting",
-      "Tripods",
-      "Audio",
-      "Accessories",
-      "Other",
-    ]),
+    category: text,
     brand: optional,
     model: optional,
     serial_number: optional,

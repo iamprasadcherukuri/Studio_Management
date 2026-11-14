@@ -21,6 +21,31 @@ const receipts = await readFile(
   new URL("../database/migrations/003_receipt_design.up.sql", import.meta.url),
   "utf8",
 );
+const masters = await readFile(
+  new URL(
+    "../database/migrations/004_master_management.up.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const staffDetails = await readFile(
+  new URL("../database/migrations/005_staff_details.up.sql", import.meta.url),
+  "utf8",
+);
+const customerDetails = await readFile(
+  new URL(
+    "../database/migrations/006_customer_title_gender.up.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const paymentDiscounts = await readFile(
+  new URL(
+    "../database/migrations/007_payment_discounts.up.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const sql = `-- Photography Studio: one-run FRESH installation (core + invoices + equipment).
 -- Run the entire file in Supabase SQL Editor or psql against the chosen database.
 -- No passwords, customer data, payment data, demo packages or rollback statements.
@@ -40,9 +65,13 @@ ${core.replace("SET search_path TO studio, public;", "SET LOCAL search_path TO s
 ${feature}
 ${reversals}
 ${receipts}
+${masters}
+${staffDetails}
+${customerDetails}
+${paymentDiscounts}
 
 CREATE TABLE schema_migrations(version TEXT PRIMARY KEY,applied_at TIMESTAMPTZ NOT NULL DEFAULT now());
-INSERT INTO schema_migrations(version) VALUES('001_invoices_equipment'),('002_payment_reversals'),('003_receipt_design');
+INSERT INTO schema_migrations(version) VALUES('001_invoices_equipment'),('002_payment_reversals'),('003_receipt_design'),('004_master_management'),('005_staff_details'),('006_customer_title_gender'),('007_payment_discounts');
 COMMIT;
 `;
 await writeFile(new URL("../database/install_all.sql", import.meta.url), sql);
@@ -62,6 +91,66 @@ COMMIT;
 `,
 );
 console.log("Created backend/database/install_all.sql for a fresh database.");
+await writeFile(
+  new URL("../database/upgrade_007_payment_discounts.sql", import.meta.url),
+  `-- Review and back up before execution. Original payments/receipts remain unchanged.
+BEGIN;
+SET LOCAL search_path TO studio,public;
+SELECT pg_advisory_xact_lock(hashtext('studio-migrations:studio'));
+DO $$ BEGIN
+IF NOT EXISTS(SELECT 1 FROM schema_migrations WHERE version='006_customer_title_gender') THEN RAISE EXCEPTION 'Apply migration 006 first'; END IF;
+IF EXISTS(SELECT 1 FROM schema_migrations WHERE version='007_payment_discounts') THEN RAISE EXCEPTION 'Payment discount migration already applied'; END IF;
+END;$$;
+${paymentDiscounts}
+INSERT INTO schema_migrations(version) VALUES('007_payment_discounts');
+COMMIT;
+`,
+);
+await writeFile(
+  new URL("../database/upgrade_006_customer_title_gender.sql", import.meta.url),
+  `-- Review and back up before execution. Existing customers remain unchanged.
+BEGIN;
+SET LOCAL search_path TO studio,public;
+SELECT pg_advisory_xact_lock(hashtext('studio-migrations:studio'));
+DO $$ BEGIN
+IF NOT EXISTS(SELECT 1 FROM schema_migrations WHERE version='005_staff_details') THEN RAISE EXCEPTION 'Apply migration 005 first'; END IF;
+IF EXISTS(SELECT 1 FROM schema_migrations WHERE version='006_customer_title_gender') THEN RAISE EXCEPTION 'Customer details migration already applied'; END IF;
+END;$$;
+${customerDetails}
+INSERT INTO schema_migrations(version) VALUES('006_customer_title_gender');
+COMMIT;
+`,
+);
+await writeFile(
+  new URL("../database/upgrade_005_staff_details.sql", import.meta.url),
+  `-- Review and back up before execution. Existing staff records remain unchanged.
+BEGIN;
+SET LOCAL search_path TO studio,public;
+SELECT pg_advisory_xact_lock(hashtext('studio-migrations:studio'));
+DO $$ BEGIN
+IF NOT EXISTS(SELECT 1 FROM schema_migrations WHERE version='004_master_management') THEN RAISE EXCEPTION 'Apply migration 004 first'; END IF;
+IF EXISTS(SELECT 1 FROM schema_migrations WHERE version='005_staff_details') THEN RAISE EXCEPTION 'Staff details migration already applied'; END IF;
+END;$$;
+${staffDetails}
+INSERT INTO schema_migrations(version) VALUES('005_staff_details');
+COMMIT;
+`,
+);
+await writeFile(
+  new URL("../database/upgrade_004_master_management.sql", import.meta.url),
+  `-- Review and back up the target before execution. Existing records are preserved.
+BEGIN;
+SET LOCAL search_path TO studio,public;
+SELECT pg_advisory_xact_lock(hashtext('studio-migrations:studio'));
+DO $$ BEGIN
+IF NOT EXISTS(SELECT 1 FROM schema_migrations WHERE version='003_receipt_design') THEN RAISE EXCEPTION 'Apply migration 003 first'; END IF;
+IF EXISTS(SELECT 1 FROM schema_migrations WHERE version='004_master_management') THEN RAISE EXCEPTION 'Master migration already applied'; END IF;
+END; $$;
+${masters}
+INSERT INTO schema_migrations(version) VALUES('004_master_management');
+COMMIT;
+`,
+);
 
 await writeFile(
   new URL("../database/upgrade_003_receipt_design.sql", import.meta.url),

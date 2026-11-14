@@ -21,7 +21,7 @@ try {
       [schema, "BASE TABLE"],
     )
   ).rows;
-  assert.equal(tables.length, 22);
+  assert.equal(tables.length, 24);
   assert.equal(
     (await client.query(`SELECT count(*)::int AS count FROM ${schema}.users`))
       .rows[0].count,
@@ -65,7 +65,7 @@ try {
         `SELECT count(*)::int AS count FROM ${schema}.schema_migrations`,
       )
     ).rows[0].count,
-    3,
+    7,
   );
   assert.equal(
     (await client.query(`SELECT count(*)::int AS count FROM ${schema}.roles`))
@@ -73,7 +73,7 @@ try {
     2,
   );
   console.log(
-    "PASS: single-run installation creates all 22 tables and records migrations; repeat execution is blocked without modifying records.",
+    "PASS: single-run installation creates all 24 tables and records migrations; repeat execution is blocked without modifying records.",
   );
 } finally {
   await client.query("ROLLBACK");

@@ -5,6 +5,7 @@ import { ZodError } from "zod";
 import { config } from "./config/env.js";
 import { api } from "./controllers/api.js";
 import { enhancements } from "./routes/enhancements.js";
+import { masters } from "./routes/masters.js";
 export const app = express();
 app.set("trust proxy", config.proxyHops);
 app.use(helmet());
@@ -28,6 +29,7 @@ app.get("/", (req, res) =>
   res.json({ status: "OK", service: "Studio Management API" }),
 );
 app.use("/api", enhancements);
+app.use("/api", masters);
 app.use("/api", api);
 app.use((req, res) => res.status(404).json({ error: "Endpoint not found" }));
 app.use((error, req, res, next) => {

@@ -8,6 +8,53 @@ const payment = {
   method: "Cash",
   idempotency_key: "8860055f-72ea-4d92-9b3b-12de42353f6a",
 };
+test("staff requires DOB, email and address; all mobile fields accept exactly 10 digits", () => {
+  const staff = {
+    name: "Photographer",
+    mobile: "0123456789",
+    dob: "1990-02-28",
+    email: "staff@example.test",
+    address: "Hyderabad",
+  };
+  assert.equal(parse("staff", staff).mobile, "0123456789");
+  for (const patch of [
+    { dob: "" },
+    { dob: "2025-02-30" },
+    { dob: "2099-01-01" },
+    { email: "" },
+    { email: "invalid" },
+    { address: " " },
+    { mobile: "123456789" },
+    { mobile: "12345678901" },
+    { mobile: "98765abcde" },
+    { mobile: "+919876543210" },
+  ])
+    assert.throws(() => parse("staff", { ...staff, ...patch }));
+  for (const field of ["dob", "email", "address"]) {
+    const missing = { ...staff };
+    delete missing[field];
+    assert.throws(() => parse("staff", missing));
+  }
+  assert.equal(parse("staff", { ...staff, mobile: "" }).mobile, null);
+  for (const mobile of ["123456789", "12345678901", "abcdefghij"]) {
+    assert.throws(() => parse("customers", { name: "Customer", mobile }));
+    assert.throws(() =>
+      parse("customers", {
+        name: "Customer",
+        mobile: "9876543210",
+        alternate_mobile: mobile,
+      }),
+    );
+    assert.throws(() =>
+      parse("settings", {
+        name: "Studio",
+        phone: mobile,
+        email: "",
+        address: "",
+      }),
+    );
+  }
+});
 test("payments require positive amounts, valid dates and an idempotency key", () => {
   assert.equal(parse("payments", payment).amount, 100);
   for (const patch of [
@@ -16,7 +63,7 @@ test("payments require positive amounts, valid dates and an idempotency key", ()
     { amount: 1.234 },
     { date: "2026-02-30" },
     { idempotency_key: "" },
-    { method: "Unsupported" },
+    { method: "" },
   ])
     assert.throws(() => parse("payments", { ...payment, ...patch }));
 });

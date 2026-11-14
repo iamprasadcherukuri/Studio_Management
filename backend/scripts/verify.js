@@ -116,9 +116,73 @@ try {
   token = (await request("/auth/login", { method: "POST", body: admin })).token;
   const customer = await request("/customers", {
     method: "POST",
-    body: { name: "Test Customer", mobile: "9876543210" },
+    body: {
+      name: "Test Customer",
+      mobile: "9876543210",
+      title: "Mr.",
+      gender: "Male",
+    },
     status: 201,
   });
+  assert.equal(customer.title, "Mr.");
+  assert.equal(customer.gender, "Male");
+  await request("/customers", {
+    method: "POST",
+    body: { name: "Invalid profile", mobile: "9876543210", title: "Unknown" },
+    status: 400,
+  });
+  await request("/customers", {
+    method: "POST",
+    body: { name: "Invalid gender", mobile: "9876543210", gender: "Unknown" },
+    status: 400,
+  });
+  const updatedCustomer = await request(`/customers/${customer.id}`, {
+    method: "PUT",
+    body: {
+      name: customer.name,
+      mobile: customer.mobile,
+      title: "Dr.",
+      gender: "Prefer not to say",
+    },
+  });
+  assert.equal(updatedCustomer.title, "Dr.");
+  assert.equal(updatedCustomer.gender, "Prefer not to say");
+  for (const q of ["Test Customer", "Customer", "test", "9876543210", "9876"]) {
+    const found = await request("/customers/search?q=" + encodeURIComponent(q));
+    assert.deepEqual(found.data, [
+      {
+        customer_id: customer.id,
+        customer_name: customer.name,
+        mobile_number: customer.mobile,
+      },
+    ]);
+  }
+  assert.deepEqual(
+    (await request(`/customers/search?id=${customer.id}`)).data[0].customer_id,
+    customer.id,
+  );
+  for (const q of ["No-such-customer", "' OR 1=1 --", "%"])
+    assert.equal(
+      (await request("/customers/search?q=" + encodeURIComponent(q))).data
+        .length,
+      0,
+    );
+  await request("/customers/search?id=invalid", { status: 400 });
+  await request("/customers/search?q=" + "a".repeat(151), { status: 400 });
+  const fixtures = (
+    await database.query(
+      "INSERT INTO customers(name,mobile) SELECT 'Search fixture '||n,'9000000000' FROM generate_series(1,12) n RETURNING id",
+    )
+  ).rows;
+  const firstSearch = await request("/customers/search?q=Search%20fixture");
+  assert.equal(firstSearch.data.length, 10);
+  assert.deepEqual(
+    (await request("/customers/search?q=Search%20fixture")).data,
+    firstSearch.data,
+  );
+  await database.query("DELETE FROM customers WHERE id=ANY($1::int[])", [
+    fixtures.map((c) => c.id),
+  ]);
   const pkg = await request("/packages", {
     method: "POST",
     body: { name: "Test Package", amount: 10000 },
@@ -126,9 +190,31 @@ try {
   });
   const staff = await request("/staff", {
     method: "POST",
-    body: { name: "Test Photographer" },
+    body: {
+      name: "Test Photographer",
+      mobile: "9876543210",
+      dob: "1990-01-15",
+      email: "photographer@example.test",
+      address: "Hyderabad",
+    },
     status: 201,
   });
+  assert.equal(staff.dob, "1990-01-15");
+  await request("/staff", {
+    method: "POST",
+    body: { name: "Missing profile" },
+    status: 400,
+  });
+  await request(`/staff/${staff.id}`, {
+    method: "PUT",
+    body: { ...staff, mobile: "12345678901" },
+    status: 400,
+  });
+  const updatedStaff = await request(`/staff/${staff.id}`, {
+    method: "PUT",
+    body: { ...staff, address: "Updated address" },
+  });
+  assert.equal(updatedStaff.address, "Updated address");
   const lookups = await request("/lookups");
   const booking = await request("/bookings", {
     method: "POST",
@@ -144,6 +230,14 @@ try {
     },
     status: 201,
   });
+  assert.equal(booking.customer_id, customer.id);
+  const bookingInformation = await request(`/bookings/${booking.id}`);
+  assert.equal(bookingInformation.customer_id, customer.id);
+  assert.equal(bookingInformation.customer_mobile, customer.mobile);
+  assert.deepEqual(bookingInformation.staff_names, ["Test Photographer"]);
+  await request("/bookings/2147483647", { status: 404 });
+  await request("/bookings/invalid", { status: 400 });
+  await request(`/bookings/${booking.id}`, { auth: "", status: 401 });
   await request(`/customers/${customer.id}`, { method: "DELETE", status: 409 });
   const payment = {
     booking_id: booking.id,
@@ -209,8 +303,8 @@ try {
     method: "POST",
     body: {
       booking_id: booking.id,
-      album_type: "Wedding",
-      size: "12x18",
+      album_type: "Wedding Album",
+      size: "12×18",
       pages: 30,
       printing_cost: 500,
       status: "Pending",

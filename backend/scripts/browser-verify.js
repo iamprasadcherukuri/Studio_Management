@@ -83,17 +83,76 @@ try {
     page.locator("aside").getByRole("link", { name, exact: true }).click();
   await nav("Customers");
   await page.getByRole("button", { name: "Add customer" }).click();
+  await page
+    .getByRole("dialog")
+    .getByLabel(/^Title/)
+    .selectOption("Ms.");
+  await page
+    .getByRole("dialog")
+    .getByLabel(/^Gender/)
+    .selectOption("Female");
   await page.getByLabel("Full name").fill("Meera Rao");
   await page.getByLabel("Mobile number").fill("9876543210");
   await page.getByRole("button", { name: "Save customer" }).click();
   await expect(
     page.getByRole("cell", { name: "Meera Rao", exact: true }),
   ).toBeVisible();
-  await nav("Bookings");
-  await page.getByRole("button", { name: "Add booking" }).click();
   await page
-    .getByLabel("Customer", { exact: false })
-    .selectOption({ label: "Meera Rao" });
+    .getByRole("button", { name: "Edit customer", exact: true })
+    .click();
+  await expect(page.getByRole("dialog").getByLabel(/^Title/)).toHaveValue(
+    "Ms.",
+  );
+  await expect(page.getByRole("dialog").getByLabel(/^Gender/)).toHaveValue(
+    "Female",
+  );
+  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await nav("Bookings");
+  await database.query(
+    "INSERT INTO customers(name,mobile) VALUES('Suresh Reddy','9123456780')",
+  );
+  const beforeCustomerSearch = Number(
+    (await database.query("SELECT count(*) FROM customers")).rows[0].count,
+  );
+  await page.getByRole("button", { name: "Add booking" }).click();
+  const customerSearch = page.getByRole("combobox", {
+    name: "Search Customer",
+  });
+  const customerBounds = await customerSearch.boundingBox(),
+    eventBounds = await page.getByLabel("Event type").boundingBox();
+  assert.ok(
+    Math.abs(customerBounds.y - eventBounds.y) <= 1,
+    "Customer and event inputs must align",
+  );
+  assert.ok(
+    Math.abs(customerBounds.height - eventBounds.height) <= 1,
+    "Customer and event inputs must have matching heights",
+  );
+  for (const query of ["Meera Rao", "Rao", "9876543210", "9876"]) {
+    await customerSearch.fill(query);
+    await expect(
+      page.getByRole("option", { name: "Meera Rao — 9876543210" }),
+    ).toBeVisible();
+  }
+  await customerSearch.press("ArrowDown");
+  await customerSearch.press("ArrowUp");
+  await customerSearch.press("Enter");
+  await expect(customerSearch).toHaveValue("Meera Rao — 9876543210");
+  await customerSearch.fill("No such customer");
+  await expect(
+    page.getByText("No customers found", { exact: true }),
+  ).toBeVisible();
+  assert.equal(
+    await customerSearch.evaluate((node) => node.checkValidity()),
+    false,
+  );
+  await customerSearch.press("Escape");
+  await expect(customerSearch).toHaveAttribute("aria-expanded", "false");
+  await customerSearch.fill("9123");
+  await page.getByRole("option", { name: "Suresh Reddy — 9123456780" }).click();
+  await expect(customerSearch).toHaveValue("Suresh Reddy — 9123456780");
+  await customerSearch.fill("Meera");
+  await page.getByRole("option", { name: "Meera Rao — 9876543210" }).click();
   await page.getByLabel("Event type").selectOption({ label: "Wedding" });
   await page.getByLabel("Event date").fill("2026-12-12");
   await page.getByLabel("Event location").fill("Bluebell Hall");
@@ -102,12 +161,61 @@ try {
   await expect(
     page.getByRole("cell", { name: "Meera Rao", exact: true }),
   ).toBeVisible();
+  const selectedCustomer = (
+    await database.query("SELECT id FROM customers WHERE mobile='9876543210'")
+  ).rows[0];
+  assert.equal(
+    (
+      await database.query(
+        "SELECT customer_id FROM bookings WHERE location='Bluebell Hall'",
+      )
+    ).rows[0].customer_id,
+    selectedCustomer.id,
+  );
+  assert.equal(
+    Number(
+      (await database.query("SELECT count(*) FROM customers")).rows[0].count,
+    ),
+    beforeCustomerSearch,
+  );
+  await page.getByRole("button", { name: "Edit booking" }).click();
+  await expect(
+    page.getByRole("combobox", { name: "Search Customer" }),
+  ).toHaveValue("Meera Rao — 9876543210");
+  await page.getByRole("button", { name: "Close dialog" }).click();
   await nav("Payments");
   await page.getByRole("button", { name: "Add payment" }).click();
   await page.getByLabel("Booking", { exact: false }).selectOption({ index: 1 });
   await page.getByLabel("Amount (₹)", { exact: false }).fill("5000");
+  await page.getByLabel(/^Additional discount type/).selectOption("PERCENTAGE");
+  await page.getByLabel(/^Additional discount value/).fill("4");
+  await expect(
+    page
+      .locator(".payment-discount-preview")
+      .getByText("Additional discount", { exact: true })
+      .locator("..")
+      .locator("dd"),
+  ).toContainText("1,000");
+  await page.getByLabel(/^Additional discount type/).selectOption("FIXED");
+  await page.getByLabel(/^Additional discount value/).fill("1000");
+  await expect(
+    page
+      .locator(".payment-discount-preview")
+      .getByText("Balance after payment", { exact: true })
+      .locator("..")
+      .locator("dd"),
+  ).toContainText("19,000");
   await page.getByLabel("Payment method").selectOption("UPI");
   await page.getByRole("button", { name: "Save receipt" }).click();
+  await expect(page.getByRole('dialog')).toBeHidden();
+  assert.equal(
+    (
+      await database.query(
+        "SELECT payment_discount_amount FROM payments ORDER BY id DESC LIMIT 1",
+      )
+    ).rows[0].payment_discount_amount,
+    "1000.00",
+  );
   await expect(
     page.getByRole("cell", { name: "Meera Rao", exact: true }),
   ).toBeVisible();
@@ -135,12 +243,12 @@ try {
   await nav("Albums");
   await page.getByRole("button", { name: "Add album" }).click();
   await page.getByLabel("Booking", { exact: false }).selectOption({ index: 1 });
-  await page.getByLabel("Album type").fill("Wedding story");
-  await page.getByLabel("Size", { exact: false }).fill("12x18");
+  await page.getByLabel("Album type").selectOption("Wedding Album");
+  await page.getByLabel("Size", { exact: false }).selectOption("12×18");
   await page.getByLabel("Number of pages").fill("30");
   await page.getByRole("button", { name: "Save album" }).click();
   await expect(
-    page.getByRole("cell", { name: "Wedding story", exact: true }),
+    page.getByRole("cell", { name: "Wedding Album", exact: true }),
   ).toBeVisible();
   await nav("Expenses");
   await page.getByRole("button", { name: "Add expense" }).click();
@@ -160,9 +268,126 @@ try {
   await page.getByRole("button", { name: "Export CSV" }).click();
   assert.ok((await download).suggestedFilename().endsWith(".csv"));
   await nav("Settings");
+  const settingsSections = page.locator(".settings-section");
+  await expect(settingsSections).toHaveCount(4);
+  for (const name of [
+    "Studio Profile",
+    "Master Management",
+    "Packages",
+    "Staff",
+  ])
+    await expect(
+      page.getByRole("button", { name, exact: true }),
+    ).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByLabel("Studio name")).toBeHidden();
+  const profileToggle = page.getByRole("button", {
+    name: "Studio Profile",
+    exact: true,
+  });
+  await profileToggle.focus();
+  await profileToggle.press("Enter");
   await page.getByLabel("Studio name").fill("Blue Hour Studio");
+  await profileToggle.click();
+  await expect(page.getByLabel("Studio name")).toBeHidden();
+  await profileToggle.click();
+  await expect(page.getByLabel("Studio name")).toHaveValue("Blue Hour Studio");
+  await page.getByRole("button", { name: "Packages", exact: true }).click();
+  const staffToggle = page.getByRole("button", { name: "Staff", exact: true });
+  await staffToggle.focus();
+  await staffToggle.press("Space");
+  await expect(staffToggle).toHaveAttribute("aria-expanded", "true");
+  await expect(profileToggle).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    page.getByRole("button", { name: "Packages", exact: true }),
+  ).toHaveAttribute("aria-expanded", "true");
+  await page
+    .getByRole("button", { name: "Master Management", exact: true })
+    .click();
   await page.getByRole("button", { name: "Save studio details" }).click();
   await expect(page.getByText("Studio details saved.")).toBeVisible();
+  await page
+    .getByRole("button", { name: "Add staff member", exact: true })
+    .click();
+  const staffDialog = page.getByRole("dialog");
+  await staffDialog.getByLabel("Staff name").fill("Local Photographer");
+  await staffDialog.getByLabel("Mobile", { exact: true }).fill("9876543210");
+  await expect(
+    staffDialog.getByLabel("Mobile", { exact: true }),
+  ).toHaveAttribute("maxlength", "10");
+  await staffDialog.getByLabel("Date of birth").fill("1990-01-15");
+  await staffDialog
+    .getByLabel("Email address")
+    .fill("photographer@example.test");
+  await staffDialog.getByLabel(/^Address/).fill("Hyderabad");
+  await staffDialog
+    .getByRole("button", { name: "Save staff member", exact: true })
+    .click();
+  await expect(
+    page.getByRole("cell", { name: "photographer@example.test", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Master Management" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Add entity", exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .getByLabel("Entity name")
+    .fill("Delivery Options");
+  await expect(
+    page.getByRole("dialog").getByLabel("Generated code"),
+  ).toHaveValue("DELIVERY_OPTIONS");
+  await page.getByRole("button", { name: "Save master", exact: true }).click();
+  await expect(page.getByLabel("Master entity")).toHaveValue(/\d+/);
+  await page.getByRole("button", { name: "Add value", exact: true }).click();
+  await page.getByRole("dialog").getByLabel("Value name").fill("Home Delivery");
+  await expect(
+    page.getByRole("dialog").getByLabel("Generated code"),
+  ).toHaveValue("HOME_DELIVERY");
+  await page.getByRole("button", { name: "Save master", exact: true }).click();
+  await expect(
+    page.getByRole("cell", { name: "HOME_DELIVERY", exact: true }),
+  ).toBeVisible();
+  const masterRow = page.getByRole("row").filter({
+    has: page.getByRole("cell", { name: "HOME_DELIVERY", exact: true }),
+  });
+  await masterRow.getByRole("button", { name: "Edit", exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .getByLabel("Value name")
+    .fill("Courier Delivery");
+  await expect(
+    page.getByRole("dialog").getByLabel("Generated code"),
+  ).toHaveValue("HOME_DELIVERY");
+  await page.getByRole("button", { name: "Save master", exact: true }).click();
+  await expect(
+    page.getByRole("cell", { name: "Courier Delivery", exact: true }),
+  ).toBeVisible();
+  await masterRow
+    .getByRole("button", { name: "Deactivate", exact: true })
+    .click();
+  await expect(
+    masterRow.getByRole("cell", { name: "Inactive", exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("Search entities").fill("");
+  await expect(
+    page
+      .getByLabel("Master entity")
+      .locator("option")
+      .filter({ hasText: "Album Type" }),
+  ).toHaveCount(1);
+  await page.getByLabel("Master entity").selectOption({ label: "Album Type" });
+  await expect(
+    page.getByRole("cell", { name: "Wedding Album", exact: true }),
+  ).toBeVisible();
+  await mkdir(new URL("../../test-results/", import.meta.url), {
+    recursive: true,
+  });
+  await page.locator(".master-management").screenshot({
+    path: new URL(
+      "../../test-results/master-management.png",
+      import.meta.url,
+    ).pathname.replace(/^\/([A-Za-z]:)/, "$1"),
+  });
   await nav("Users");
   await expect(
     page.getByRole("cell", { name: "Studio Owner", exact: true }),
@@ -208,7 +433,7 @@ try {
     .click();
   await page.getByLabel("Asset code").fill("UI-CAM-01");
   await page.getByLabel("Equipment name").fill("Browser Camera");
-  await page.getByRole("dialog").getByLabel("Category").selectOption("Cameras");
+  await page.getByRole("dialog").getByLabel("Category").selectOption("Camera");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(
     page.getByRole("cell", { name: "UI-CAM-01", exact: true }),
@@ -271,6 +496,27 @@ try {
   await expect(
     page.getByRole("cell", { name: "12 Dec 2026", exact: true }),
   ).toBeVisible();
+  const upcomingBooking = page.getByRole("link", {
+    name: "View booking for Meera Rao",
+    exact: true,
+  });
+  await upcomingBooking.focus();
+  await upcomingBooking.press("Enter");
+  await expect(page).toHaveURL(/\/bookings\?booking=\d+/);
+  await expect(
+    page.getByRole("heading", { name: "Booking information", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("dialog").getByText("Bluebell Hall", { exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByRole("dialog").getByText("Bluebell Hall", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await expect(page).toHaveURL(/\/bookings$/);
+  await nav("Dashboard");
+  await expect(page.getByText("Money in, money out")).toBeVisible();
   await mkdir(new URL("../../test-results/", import.meta.url), {
     recursive: true,
   });

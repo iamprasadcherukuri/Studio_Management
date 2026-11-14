@@ -1,10 +1,16 @@
 import React, { useEffect, useState } from "react";
+import CustomerSearchSelect from "./components/CustomerSearchSelect";
+import SettingsSection from "./components/SettingsSection";
+import BookingInformation from "./components/BookingInformation";
+import PaymentDiscountPreview from "./components/PaymentDiscountPreview";
+import MasterManagement from "./pages/MasterManagement";
 import {
   NavLink,
   Routes,
   Route,
   useLocation,
   Navigate,
+  useSearchParams,
 } from "react-router-dom";
 import {
   Camera,
@@ -89,6 +95,7 @@ const nav = [
   ["Settings", "/settings", Settings],
 ];
 const labels = {
+  dob: "Date of birth",
   customer_code: "Customer ID",
   name: "Name",
   mobile: "Mobile",
@@ -147,10 +154,12 @@ const columns = {
   expenses: ["date", "category", "description", "amount", "method"],
   users: ["name", "email", "role", "active"],
   packages: ["name", "amount", "description"],
-  staff: ["name", "mobile"],
+  staff: ["name", "mobile", "dob", "email", "address"],
 };
 const fields = {
   customers: [
+    ["title", "Title", "text", false],
+    ["gender", "Gender", "text", false],
     ["name", "Full name"],
     ["mobile", "Mobile number"],
     ["alternate_mobile", "Alternate mobile", "text", false],
@@ -179,6 +188,12 @@ const fields = {
     ["booking_id", "Booking", "bookings"],
     ["date", "Payment date", "date"],
     ["amount", "Amount (₹)", "number"],
+    [
+      "payment_discount_type",
+      "Additional discount type",
+      ["NONE", "FIXED", "PERCENTAGE"],
+    ],
+    ["payment_discount_value", "Additional discount value (% or ₹)", "number"],
     ["method", "Payment method", [...methods, "Card"]],
     [
       "payment_type",
@@ -226,12 +241,16 @@ const fields = {
   ],
   packages: [
     ["name", "Package name"],
+    ["package_type", "Package type", "text", false],
     ["amount", "Price (₹)", "number"],
     ["description", "Description", "textarea", false],
   ],
   staff: [
     ["name", "Staff name"],
     ["mobile", "Mobile", "text", false],
+    ["dob", "Date of birth", "date"],
+    ["email", "Email address", "email"],
+    ["address", "Address", "textarea"],
   ],
   settings: [
     ["name", "Studio name"],
@@ -291,6 +310,48 @@ function FormFields({
   return (
     <div className="form-grid">
       {definitions[kind].map(([key, label, type = "text", required = true]) => {
+        if (key === "customer_id")
+          return (
+            <CustomerSearchSelect
+              key={key}
+              id={key}
+              value={value[key]}
+              required={required}
+              onChange={(customerId) =>
+                setValue((previous) => ({ ...previous, [key]: customerId }))
+              }
+            />
+          );
+        const entityCode = ({
+          customers: { title: "CUSTOMER_TITLE", gender: "CUSTOMER_GENDER" },
+          albums: { album_type: "ALBUM_TYPE", size: "ALBUM_SIZE" },
+          payments: { method: "PAYMENT_TYPE" },
+          expenses: { category: "EXPENSE_CATEGORY" },
+          equipment: { category: "EQUIPMENT_CATEGORY" },
+          packages: { package_type: "PACKAGE_TYPE" },
+        }[kind] || {})[key];
+        if (entityCode) {
+          type = (lookups.master_values || [])
+            .filter((v) => v.entity_code === entityCode)
+            .map((v) => ({ id: v.stored_value, name: v.value_name }));
+          if (value[key] && !type.some((x) => x.id === value[key]))
+            type.push({ id: value[key], name: value[key] + " (saved value)" });
+        }
+        if (
+          kind === "bookings" &&
+          key === "event_type_id" &&
+          value[key] &&
+          !(lookups.event_types || []).some(
+            (x) => String(x.id) === String(value[key]),
+          )
+        )
+          lookups = {
+            ...lookups,
+            event_types: [
+              ...(lookups.event_types || []),
+              { id: value[key], name: value.event_type || "Saved event type" },
+            ],
+          };
         const common = {
           id: key,
           name: key,
@@ -298,7 +359,17 @@ function FormFields({
           readOnly: kind === "bookings" && key === "agreed_amount",
           value: value[key] ?? "",
           onChange: (e) => {
+            if (
+              ["mobile", "alternate_mobile", "phone"].includes(key) &&
+              !/^\d{0,10}$/.test(e.target.value)
+            )
+              return;
             const next = { ...value, [key]: e.target.value };
+            if (
+              key === "payment_discount_type" &&
+              next.payment_discount_type === "NONE"
+            )
+              next.payment_discount_value = "0";
             if (key === "package_id") {
               const p = lookups.packages?.find(
                 (p) => String(p.id) === e.target.value,
@@ -368,13 +439,34 @@ function FormFields({
             ) : (
               <input
                 {...common}
-                type={type}
+                type={
+                  ["mobile", "alternate_mobile", "phone"].includes(key)
+                    ? "tel"
+                    : type
+                }
+                inputMode={
+                  ["mobile", "alternate_mobile", "phone"].includes(key)
+                    ? "numeric"
+                    : undefined
+                }
+                pattern={
+                  ["mobile", "alternate_mobile", "phone"].includes(key)
+                    ? "[0-9]{10}"
+                    : undefined
+                }
+                max={key === "dob" ? today() : undefined}
                 min={type === "number" ? (key === "pages" ? 1 : 0) : undefined}
                 step={
                   type === "number" ? (key === "pages" ? 1 : "0.01") : undefined
                 }
                 minLength={key === "password" ? 12 : undefined}
-                maxLength={key === "password" ? 72 : undefined}
+                maxLength={
+                  ["mobile", "alternate_mobile", "phone"].includes(key)
+                    ? 10
+                    : key === "password"
+                      ? 72
+                      : undefined
+                }
               />
             )}
           </label>
@@ -1051,7 +1143,12 @@ function Dashboard({ user }) {
           </div>
           {data.bookings.length ? (
             data.bookings.map((b) => (
-              <div className="event-row" key={b.id}>
+              <NavLink
+                className="event-row"
+                key={b.id}
+                to={`/bookings?booking=${b.id}`}
+                aria-label={`View booking for ${b.customer_name}`}
+              >
                 <div className="date-square">
                   <strong>{new Date(b.event_date).getDate()}</strong>
                   <small>
@@ -1067,7 +1164,7 @@ function Dashboard({ user }) {
                   </p>
                 </div>
                 <ChevronRight size={15} />
-              </div>
+              </NavLink>
             ))
           ) : (
             <Empty
@@ -1200,7 +1297,12 @@ function cell(key, value) {
     ].includes(key)
   )
     return money(value);
-  if (key.includes("date") || key.includes("delivery") || key === "created_at")
+  if (
+    key === "dob" ||
+    key.includes("date") ||
+    key.includes("delivery") ||
+    key === "created_at"
+  )
     return date(value);
   if (key === "booking_id") return "#" + value;
   return String(value);
@@ -1249,7 +1351,15 @@ const featureUi = {
   date,
   today,
 };
-function Records({ kind, user, settings, embedded = false }) {
+function Records({
+  kind,
+  user,
+  settings,
+  embedded = false,
+  sectioned = false,
+}) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const bookingId = kind === "bookings" ? searchParams.get("booking") : null;
   const [rows, setRows] = useState([]),
     [total, setTotal] = useState(0),
     [page, setPage] = useState(1),
@@ -1314,6 +1424,9 @@ function Records({ kind, user, settings, embedded = false }) {
       .get("/lookups")
       .then((r) => setLookups(r.data))
       .catch((e) => setError(message(e)));
+  useEffect(() => {
+    if (kind === "expenses") fetchLookups();
+  }, [kind]);
   function start(row) {
     setError("");
     setNotice("");
@@ -1337,6 +1450,8 @@ function Records({ kind, user, settings, embedded = false }) {
             role: "staff",
             idempotency_key: crypto.randomUUID(),
             payment_type: "Advance",
+            payment_discount_type: "NONE",
+            payment_discount_value: "0",
             total_amount: "",
             discount_type: "NONE",
             discount_value: "0",
@@ -1408,6 +1523,22 @@ function Records({ kind, user, settings, embedded = false }) {
   );
   return (
     <>
+      {bookingId && (
+        <BookingInformation
+          id={bookingId}
+          close={() =>
+            setSearchParams(
+              (previous) => {
+                const next = new URLSearchParams(previous);
+                next.delete("booking");
+                return next;
+              },
+              { replace: true },
+            )
+          }
+          ui={{ Modal, ErrorBox, money, date }}
+        />
+      )}
       {!embedded && (
         <Heading
           eyebrow="KEEP EVERY DETAIL IN FOCUS"
@@ -1431,7 +1562,7 @@ function Records({ kind, user, settings, embedded = false }) {
       )}
       {embedded && (
         <div className="card-heading">
-          <h2>{title}</h2>
+          {!sectioned && <h2>{title}</h2>}
           <button onClick={() => start()}>
             <Plus size={16} />
             Add {singular}
@@ -1477,9 +1608,13 @@ function Records({ kind, user, settings, embedded = false }) {
                 ? stages
                 : kind === "bookings"
                   ? ["confirmed", "in progress", "completed", "cancelled"]
-                  : ["Salaries", "Equipment", "Printing", "Travel", "Other"]
+                  : (lookups.master_values || [])
+                      .filter((v) => v.entity_code === "EXPENSE_CATEGORY")
+                      .map((v) => ({ id: v.stored_value, name: v.value_name }))
               ).map((x) => (
-                <option key={x}>{x}</option>
+                <option key={x.id || x} value={x.id || x}>
+                  {x.name || x}
+                </option>
               ))}
             </select>
           )}
@@ -1676,6 +1811,9 @@ function Records({ kind, user, settings, embedded = false }) {
                 fixed discount. The final agreed amount is calculated once and
                 remains the booking's payment limit.
               </p>
+            )}
+            {kind === "payments" && (
+              <PaymentDiscountPreview value={value} money={money} />
             )}
             <div className="modal-footer">
               <button
@@ -2190,14 +2328,10 @@ function StudioSettings({ settings, onSave, user }) {
         title="Studio settings"
         subtitle="The details that make this workspace yours."
       />
-      <section className="card settings-card">
-        <div className="card-heading">
-          <div>
-            <h2>Studio profile</h2>
-            <p>These details appear on your payment receipts.</p>
-          </div>
-          <Camera size={22} />
-        </div>
+      <SettingsSection title="Studio Profile">
+        <p className="help-text">
+          These details appear on your payment receipts.
+        </p>
         <form onSubmit={save}>
           <ErrorBox error={error} />
           {notice && <div className="notice success">{notice}</div>}
@@ -2256,14 +2390,29 @@ function StudioSettings({ settings, onSave, user }) {
             </button>
           </div>
         </form>
-      </section>
-      <section className="card settings-card">
-        <Records kind="packages" user={user} settings={settings} embedded />
-      </section>
-      <section className="card settings-card">
-        <Records kind="staff" user={user} settings={settings} embedded />
-      </section>
-      <section className="card permission-note">
+      </SettingsSection>
+      <SettingsSection title="Master Management">
+        <MasterManagement ui={{ Modal, ErrorBox }} embedded />
+      </SettingsSection>
+      <SettingsSection title="Packages">
+        <Records
+          kind="packages"
+          user={user}
+          settings={settings}
+          embedded
+          sectioned
+        />
+      </SettingsSection>
+      <SettingsSection title="Staff">
+        <Records
+          kind="staff"
+          user={user}
+          settings={settings}
+          embedded
+          sectioned
+        />
+      </SettingsSection>
+      <div className="permission-note" role="note">
         <ShieldCheck />
         <div>
           <h3>Simple, secure access</h3>
@@ -2274,7 +2423,7 @@ function StudioSettings({ settings, onSave, user }) {
             administrators.
           </p>
         </div>
-      </section>
+      </div>
     </>
   );
 }
