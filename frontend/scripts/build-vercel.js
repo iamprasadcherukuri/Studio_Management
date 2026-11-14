@@ -21,6 +21,17 @@ await writeFile(
     {
       version: 3,
       routes: [
+        {
+          src: "/(.*)",
+          headers: {
+            "Content-Security-Policy": `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ${new URL(api).origin}; frame-src 'self' blob:; object-src 'self' blob:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests`,
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "strict-origin-when-cross-origin",
+            "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+          },
+          continue: true,
+        },
         { src: "^/api(?:/(.*))?$", dest: api + "/$1" },
         { handle: "filesystem" },
         { src: "/assets/.*", status: 404 },

@@ -1,6 +1,8 @@
 import { transaction } from "../database/pool.js";
 import { recordReceipt } from "./receipt-snapshots.js";
-import { bookingPricing } from "./booking-pricing.js";
+import { bookingPricing, bookingDiscountMetadata } from "./booking-pricing.js";
+import { lockScheduling, updateBookingReservations } from "./scheduling.js";
+import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
 import { validateRecordMasters } from "./master-values.js";
 import { paymentDiscount } from "./payment-discount.js";
@@ -15,7 +17,7 @@ export const definitions = {
     search: "c.name || ' ' || t.location || ' ' || e.name",
     join: "JOIN customers c ON c.id=t.customer_id JOIN event_types e ON e.id=t.event_type_id LEFT JOIN packages p ON p.id=t.package_id",
     select:
-      "t.*,c.name AS customer_name,e.name AS event_type,p.name AS package_name,COALESCE((SELECT sum(amount) FROM payment_ledger WHERE booking_id=t.id),0) AS paid,t.agreed_amount-COALESCE((SELECT sum(amount) FROM payment_ledger WHERE booking_id=t.id),0) AS outstanding,ARRAY(SELECT staff_id FROM booking_staff WHERE booking_id=t.id) AS staff_ids",
+      "t.*,coalesce((SELECT sum(payment_discount_amount) FROM payments WHERE booking_id=t.id),0) AS payment_discounts,coalesce(t.booking_discount_amount,t.discount_amount-coalesce((SELECT sum(payment_discount_amount) FROM payments WHERE booking_id=t.id),0)) AS booking_discount_amount,c.name AS customer_name,e.name AS event_type,p.name AS package_name,COALESCE((SELECT sum(amount) FROM payment_ledger WHERE booking_id=t.id),0) AS paid,t.agreed_amount-COALESCE((SELECT sum(amount) FROM payment_ledger WHERE booking_id=t.id),0) AS outstanding,ARRAY(SELECT staff_id FROM booking_staff WHERE booking_id=t.id) AS staff_ids",
   },
   payments: {
     table: "payments",
@@ -46,7 +48,37 @@ export async function writeRecord(kind, data, user, recordId) {
   return transaction(async (client) => {
     const table = definitions[kind].table;
     const { staff_ids, ...values } = data;
+    if (kind === "expenses" && !recordId && !data.idempotency_key)
+      throw fail(
+        "An expense submission key is required; refresh the form and try again",
+      );
+    if (kind === "expenses" && !recordId && data.idempotency_key) {
+      const { idempotency_key, ...payload } = data;
+      const hash = createHash("sha256")
+        .update(JSON.stringify(payload))
+        .digest("hex");
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtext(current_schema()||':expense:'||$1))",
+        [idempotency_key],
+      );
+      const old = (
+        await client.query("SELECT * FROM expenses WHERE idempotency_key=$1", [
+          idempotency_key,
+        ])
+      ).rows[0];
+      if (old) {
+        if (old.request_hash !== hash)
+          throw fail(
+            "This expense submission key is already used for different details",
+            409,
+          );
+        return old;
+      }
+      values.request_hash = hash;
+    }
+    if (kind === "expenses" && recordId) delete values.idempotency_key;
     if (kind === "bookings") {
+      if (recordId) await lockScheduling(client);
       const old = recordId
         ? (
             await client.query(
@@ -56,7 +88,16 @@ export async function writeRecord(kind, data, user, recordId) {
           ).rows[0]
         : null;
       if (recordId && !old) throw fail("Record not found", 404);
-      Object.assign(values, bookingPricing(data, old));
+      const granted = recordId
+        ? (
+            await client.query(
+              "SELECT coalesce(sum(payment_discount_amount),0) amount FROM payments WHERE booking_id=$1",
+              [recordId],
+            )
+          ).rows[0].amount
+        : 0;
+      Object.assign(values, bookingPricing(data, old, granted));
+      if (old) await updateBookingReservations(client, old, data, user);
       delete values.total_amount;
     }
     if (kind === "payments") {
@@ -130,9 +171,23 @@ export async function writeRecord(kind, data, user, recordId) {
         const cumulative = new Decimal(rows[0].discount_amount)
           .plus(discount.amount)
           .toFixed(2);
+        const priorGranted = (
+          await client.query(
+            "SELECT coalesce(sum(payment_discount_amount),0) amount FROM payments WHERE booking_id=$1",
+            [data.booking_id],
+          )
+        ).rows[0].amount;
+        const meta = bookingDiscountMetadata(rows[0], priorGranted);
         await client.query(
-          "UPDATE bookings SET agreed_amount=agreed_amount-$1,discount_amount=$2,discount_type='FIXED',discount_value=$2,updated_at=now() WHERE id=$3",
-          [discount.amount, cumulative, data.booking_id],
+          "UPDATE bookings SET agreed_amount=agreed_amount-$1,discount_amount=$2,discount_type='FIXED',discount_value=$2,booking_discount_type=$4,booking_discount_value=$5,booking_discount_amount=$6,updated_at=now() WHERE id=$3",
+          [
+            discount.amount,
+            cumulative,
+            data.booking_id,
+            meta.booking_discount_type,
+            meta.booking_discount_value,
+            meta.booking_discount_amount,
+          ],
         );
         await client.query(
           "INSERT INTO audit_logs(user_id,action,entity,entity_id) VALUES($1,$2,'bookings',$3)",
@@ -153,7 +208,7 @@ export async function writeRecord(kind, data, user, recordId) {
         "SELECT COALESCE(sum(amount),0) AS paid FROM payment_ledger WHERE booking_id=$1",
         [recordId],
       );
-      if (Number(values.agreed_amount) < Number(rows[0].paid))
+      if (new Decimal(values.agreed_amount).lt(rows[0].paid))
         throw fail("Agreed amount cannot be below payments already received");
       if (data.status === "cancelled" && Number(rows[0].paid) > 0)
         throw fail(
@@ -167,6 +222,26 @@ export async function writeRecord(kind, data, user, recordId) {
           ])
         ).rows[0]
       : null;
+    if (kind === "albums") {
+      const booking = (
+        await client.query(
+          "SELECT status FROM bookings WHERE id=$1 FOR SHARE",
+          [data.booking_id],
+        )
+      ).rows[0];
+      if (!booking) throw fail("Booking not found", 404);
+      if (
+        data.status === "Delivered" &&
+        booking.status === "cancelled" &&
+        !(
+          previous?.status === "Delivered" &&
+          previous.booking_id === data.booking_id &&
+          previous.actual_delivery === data.actual_delivery &&
+          previous.acknowledgement === data.acknowledgement
+        )
+      )
+        throw fail("A cancelled booking cannot be newly marked Delivered");
+    }
     await validateRecordMasters(client, kind, values, previous);
     const keys = Object.keys(values);
     const params = Object.values(values);

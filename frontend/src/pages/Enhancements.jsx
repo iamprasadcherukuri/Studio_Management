@@ -459,8 +459,8 @@ export function InvoicesPage({ ui }) {
               Booking #{detail.booking_id} · {detail.payment_status}
             </span>
             <span>Total: {money(detail.total_amount)}</span>
-            <span>Received: {money(detail.paid_amount)}</span>
-            <span>Outstanding: {money(detail.balance_amount)}</span>
+            <span>Currently received: {money(detail.paid_amount)}</span>
+            <span>Current outstanding: {money(detail.balance_amount)}</span>
           </div>
           <Table
             rows={detail.items}

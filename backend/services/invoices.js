@@ -11,7 +11,7 @@ export async function audit(c, user, action, entity, id) {
 export const invoiceSelect = `SELECT i.*,i.customer_snapshot->>'name' AS customer_name,
  COALESCE(p.paid,0)::numeric(12,2) AS paid_amount,
  CASE WHEN i.status='Void' THEN 0 ELSE greatest(i.total_amount-COALESCE(p.paid,0),0) END::numeric(12,2) AS balance_amount,
- CASE WHEN i.status='Void' THEN 'Void' WHEN COALESCE(p.paid,0)>=i.total_amount THEN 'Paid' WHEN i.due_date<CURRENT_DATE THEN 'Overdue' WHEN COALESCE(p.paid,0)>0 THEN 'Part paid' ELSE 'Unpaid' END AS payment_status
+ CASE WHEN i.status='Void' THEN 'Void' WHEN COALESCE(p.paid,0)>=i.total_amount THEN 'Paid' WHEN i.due_date<(now() AT TIME ZONE 'Asia/Kolkata')::date THEN 'Overdue' WHEN COALESCE(p.paid,0)>0 THEN 'Part paid' ELSE 'Unpaid' END AS payment_status
  FROM invoices i LEFT JOIN (SELECT booking_id,sum(amount) AS paid FROM payment_ledger GROUP BY booking_id) p ON p.booking_id=i.booking_id`;
 export async function invoiceDetails(id) {
   const { rows } = await pool.query(invoiceSelect + " WHERE i.id=$1", [id]);
@@ -124,6 +124,32 @@ export async function createInvoice(data, user) {
           item.line_total,
         ],
       );
+    const financial = (
+      await c.query(
+        "SELECT coalesce((SELECT sum(amount) FROM payment_ledger WHERE booking_id=$1),0)::text paid,(now() AT TIME ZONE 'Asia/Kolkata')::date::text today,now() issued_at",
+        [booking.id],
+      )
+    ).rows[0];
+    const paid = new Decimal(financial.paid),
+      balance = Decimal.max(total.minus(paid), 0);
+    const snapshot = {
+      version: 1,
+      basis: "recorded",
+      issued_at: financial.issued_at,
+      paid_amount: paid.toFixed(2),
+      balance_amount: balance.toFixed(2),
+      payment_status: paid.gte(total)
+        ? "Paid"
+        : data.due_date < financial.today
+          ? "Overdue"
+          : paid.gt(0)
+            ? "Part paid"
+            : "Unpaid",
+    };
+    await c.query("UPDATE invoices SET financial_snapshot=$1 WHERE id=$2", [
+      snapshot,
+      rows[0].id,
+    ]);
     await audit(c, user, "create", "invoices", rows[0].id);
     return rows[0].id;
   });

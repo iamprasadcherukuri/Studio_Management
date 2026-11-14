@@ -521,3 +521,81 @@ npm run verify:financial-audit -w backend
 ```
 
 The local runner refuses remote/Supabase URLs. The SQL file can be reviewed separately for read-only execution on another database; no cloud audit, migration, deployment, push or financial data repair was performed. Monetary totals in audit JSON are strings to preserve decimal precision. Frontend currency display still converts to Number and the dashboard subtracts cash using Number; values beyond safe cent precision remain an additional scaling risk even though authoritative SQL amounts are exact.
+
+## Complete project-wide audit - 14 November 2026
+
+Both supplied project-wide audit prompts were identical and ended at the same partial sentence in section 12. This review covers the listed modules plus the security, performance and production risks in the objective. This is audit-only: no application behavior, schema, existing records, Git history or deployments were changed. Reproductions used disposable local schemas, and source counts/fingerprints remained unchanged.
+
+### Summary and priorities
+
+The earlier financial findings F01-F03 remain open. Nine additional cases P01-P09 were reproduced. This is not an all-clear: existing baseline tests passing does not cover the defects demonstrated by the new audit probes.
+
+| ID | Severity | Confirmed behavior | Recommended action |
+| --- | --- | --- | --- |
+| F01 | High | Booking edits can erase previously granted payment discounts from the current balance. | Separate/preserve granted discounts during booking edits; do not silently rewrite payment history. |
+| F02 | High against historical-PDF requirement | Invoice PDF paid/balance figures change after later payments. Document net and customer/studio snapshots stay fixed. | Preserve original issue-time figures or explicitly distinguish a current statement from the historical invoice. |
+| F03 | Medium | Valid invoices totalling above NUMERIC(12,2) capacity break /feature-summary. | Widen/remove aggregate precision casts without widening individual record limits. |
+| P01 | High | Change a booking event from 15 November to 22 November: its active equipment reservation remains on 15 November. | Lock and validate active reservations on event-date edits; require an explicit reschedule/reassignment flow. |
+| P02 | Medium | Cancelling an unpaid booking leaves a future equipment assignment Active. Returning today fails because assignment date is still in the future; retirement/maintenance remain blocked. | Provide reservation cancellation or block booking cancellation until assignments are resolved. Keep physical returns distinct from cancelling future reservations. |
+| P03 | Medium/idempotency gap | Two identical expense submissions create two cash expenses. | Add stable request keys with payload comparison and transaction-safe uniqueness; do not deduplicate by amount/date alone because legitimate expenses may match. |
+| P04 | Medium/validation gap | An album can be marked Delivered with tomorrow's actual_delivery date and can reference a cancelled booking. Blank acknowledgement is correctly rejected. | Confirm cancellation/fulfillment policy and enforce actual-delivery chronology on the backend. |
+| P05 | Medium/session-policy gap | Disable an account: old JWT is rejected. Re-enable it: the same unexpired JWT becomes valid again. | If disable is intended to revoke sessions permanently, increment password_version/session version on disable. |
+| P06 | Medium | Two user enable/disable operations create zero audit log entries. User creation and studio settings changes also lack explicit audit writes in the reviewed routes. | Audit actor, target, action, time and appropriate before/after metadata without passwords or tokens. |
+| P07 | Medium | Initial user-password validation limits characters, not UTF-8 bytes. Two different Unicode password suffixes after byte 72 both authenticate due to bcrypt truncation. Generated ASCII temporary passwords are unaffected; password-change validation already checks bytes. | Apply the UTF-8 byte limit consistently at initial setup/user creation and provide clear validation. |
+| P08 | Medium/deployment | Rename the required payment_discount_amount column in a fixture: /health stays 200 but a valid payment returns 500. | Verify all current required schema objects or the expected migration version in readiness. Current public health success does not prove every latest workflow/migration is present. |
+| P09 | High/availability | Two authenticated administrators concurrently disable each other, leaving zero active administrators. The existing self-disable guard does not prevent this race. | Serialize administrator status transitions, recheck actor state and prevent disabling the last active administrator within the same transaction. |
+
+P09 was reproduced by allowing both legitimate requests to complete their normal authentication reads before either update ran. The audit temporarily coordinated those reads in the test process; it did not alter authorization results or application source. P08 renamed a column only in the disposable schema and restored it before cleanup. P07 evidence intentionally redacts passwords. All fixture schemas were removed afterward.
+
+### Security and operational observations
+
+| ID | Priority | Observation and scope |
+| --- | --- | --- |
+| R01 | High if shared/pushed | Git path audit still finds environment and database-backup artifacts in six historical commits. No sensitive paths are currently tracked. File contents were not printed, and this audit did not establish which historical commits reached external clones. Review exposure, rotate affected credentials where applicable, and plan any history rewrite separately; do not force-push automatically. |
+| R02 | Medium/hardening | The live Vercel HTML response has HSTS but no observed CSP, X-Content-Type-Options, X-Frame-Options or Referrer-Policy. Render's API has Helmet headers; those do not protect the separately hosted HTML. Review a frontend policy allowing the actual API, images and blob PDF previews before adding headers. No exploitable XSS was demonstrated. |
+| R03 | Scaling | /lookups returns every customer and booking even after autocomplete was introduced. Substring customer search cannot use the existing plain lower(name) B-tree for containment matching. Booking lists use correlated ledger totals, while large reports have no result pagination. Benchmark with realistic data before adding trigram/preaggregated indexes or changing API contracts. |
+| R04 | Release process | No .github/workflows directory was found. Existing test commands are available but there is no repository CI gate enforcing them on changes. Pin/verify the deployed Node version and keep shared/ available to frontend/backend builds. |
+| R05 | Recovery scope | A fresh local backup was checksum-checked, restored into a disposable local database, compared against source table counts/validated constraints, and removed. This does not prove Supabase backup retention or production restoration readiness; those require separate hosted access/review. |
+
+npm audit and npm audit --omit=dev both reported zero advisories from the configured registry at audit time. This is a dependency advisory check, not a guarantee against application vulnerabilities. The Git audit intentionally exits nonzero while historical sensitive paths remain; its initial sandbox spawn restriction was resolved by rerunning the same read-only check with process permission.
+
+### Module coverage
+
+| Module | Verified strengths | Findings, limits or missing functionality |
+| --- | --- | --- |
+| Dashboard | PostgreSQL-backed counts, upcoming links, signed cash/reversals, discounts, outstanding, expenses, cash balance, monthly chart, albums, invoice/equipment summaries. | F03 affects invoice summary capacity. No separate completed-booking or gross-booking-value KPI is implemented. Cash is correctly labeled rather than accounting profit. |
+| Customers | Create/edit, title/gender masters, primary/alternate 10-digit validation, name/mobile autocomplete, keyboard/mouse selection, preserved IDs, history aggregates, FK-protected deletion. | Identical customers are accepted without a duplicate warning. Shared/family mobile and uniqueness policy needs a decision before enforcing a unique constraint. History is booking-level paid/outstanding, not a detailed customer transaction statement. |
+| Bookings | Valid master event/customer/package/staff IDs, pricing/discount previews and server checks, net paid floor, invoice lock, cancellation restrictions, specific dashboard booking details. | F01, P01 and P02. Assignment-date consistency is checked on equipment assignment but not when a booking date later changes. |
+| Packages | Unique name, price/type validation, master type integration, explicit package price loading, custom gross amount, historical booking price isolation, referenced deletion blocked. | No active/inactive package workflow; package_type activity does not deactivate a package itself. |
+| Payments | Positive amount, current-balance percentage basis, cumulative discounts, exact Decimal/BigInt calculations, atomic discount/cash/receipt, duplicate/concurrent protection, final settlement, append-only bounded refunds. | F01 undermines later edits; P08 can miss deployment drift. Discounts remain after cash reversals as documented. Zero-cash discount-only entries are not supported. Remarks exist but structured discount reason is not mandatory. |
+| Invoices | One active invoice per booking enforced by unique index, rounded line totals, net matches booking, saved customer/studio snapshots, void/reissue with audit, payment-discount lock. | F02 and F03. Net is authoritative; invoice gross/discount presentation may differ while net matches, which requires business-policy clarification rather than automatic repair. |
+| Receipts | Unique numbers, real saved payment only, repeated PDF generation does not create cash, snapshots/brand assets retained, amount in words, current payment discount distinguished, reversal status separately labeled. | Older payments without snapshots reconstruct available history and cannot recover unavailable original details. Download/preview paths are browser-tested; actual physical-printer output was not tested. |
+| Expenses | Date/category/positive amount checks, general vs booking-linked costs, cash aggregation, maintenance link uniqueness, linked expense edit/delete protection. | P03. No separate expense payable/pending/status workflow; all expense rows represent paid outflows. |
+| Albums | Existing booking FK, active type/size masters, valid calendar dates, stage enum, acknowledgement required for Delivered, printing estimates excluded from cash expenses. | P04. Chronology and cancelled-booking eligibility need explicit rules. |
+| Equipment | Unique codes/serials, category and cost validation, row-locked overlap prevention, maintenance/retired assignment guards, returns/history, single linked maintenance expense. | P01/P02. No future-reservation cancellation endpoint. API concurrency is protected; direct SQL/imports do not have an exclusion constraint preventing reservation overlaps. |
+| Staff | Required DOB/email/address on save, India-date future-DOB rejection, 10-digit optional mobile, assignment FKs, referenced deletion blocked. | Legacy profiles remain incomplete until edited, deliberately preserving old data. active exists in DB/lookups but has no management toggle. |
+| Users/auth | Setup token and single-admin bootstrap lock, bcrypt cost 12, signed HS256 JWT with 8-hour expiry, DB-backed role/active/version checks, mandatory first password change, reset confirmation and old-token revocation on password change. | P05/P06/P07/P09. Logout removes the browser token; it is not a server-side JWT revocation endpoint. |
+| Master Management / Settings | Admin-only writes, staff active reads, generated immutable codes, unique constraints, ordering/search/pagination, legacy mappings, four independent accessible Settings cards, state preservation and responsive layout. | All collapsed content stays mounted, so some lists fetch before expansion; this is a performance consideration rather than a functional failure. |
+
+### Authentication and data-integrity checks
+
+The new project probes rejected unauthenticated application access and denied staff access to payments, expenses, invoices, equipment, users, staff administration, packages and reports. Staff settings/master writes were denied. Expired JWTs, forged signatures and HS384 tokens were rejected. Backend queries use parameters; table/route/sort choices are controlled by code or enums. No raw HTML rendering or eval path was found in the reviewed app. Logo handling validates PNG/JPEG bytes, dimensions and size and does not fetch arbitrary remote URLs. JSON bodies are size-limited, errors sanitize server/database details, CORS uses exact origins, and Supabase TLS verification cannot be disabled in application configuration.
+
+The local catalog has 24 application tables, migrations 001-007 and zero unvalidated constraints. Foreign keys and unique/check constraints protect references, active invoice uniqueness, receipt numbering, payment/reversal keys and linked maintenance expenses. API transaction locks protect payment, discount, refund and gear-assignment concurrency. Some lifecycle/aggregate rules live in services rather than DB constraints, so privileged direct SQL/imports can still bypass them. Production database role/RLS exposure and migrations were not inspected directly; do not infer them from a public health response.
+
+### Production connectivity and test evidence
+
+All five current public read-only checks passed: Render root, Render database health, Vercel API forwarding, React Router refresh and production CORS preflight. Both public origins returned HTTP 200 during header inspection. No production login, financial write, migration or private-data query was attempted. Hosted commit parity and the complete Supabase schema remain unverified.
+
+The local build produced an approximately 392 KB main JavaScript bundle and a separately loaded approximately 379 KB chart bundle (uncompressed). Invoice/equipment pages remain lazy chunks. The source inventory records file hashes/line counts, lockfile package count, DB tables/migrations/constraints/indexes and the source customer-search EXPLAIN plan without printing secrets.
+
+Evidence artifacts (ignored test-results): project-audit-fixtures.json, project-audit-inventory.json, financial-audit-local.json and financial-audit-fixtures.json. New project-specific tools are backend/scripts/verify-project-audit.js and backend/scripts/audit-project-inventory.js with npm scripts verify:project-audit and audit:inventory. Reproduction runners finish successfully when known findings are demonstrated; that exit status is not an all-clear for the application.
+
+Validation performed includes the 16-unit-test suite, base API, feature/equipment/invoice, receipt/discount, master, fresh installer, financial audit, project audit, browser end-to-end, frontend production build, dependency advisory scan, Git history path scan, local backup restoration and public deployment checks. The Git history scan remains a flagged result rather than a passing test. New audit cases cover previously missing event-date edits, cancelled future reservations, expense retries, future delivery, session re-enabling, account-status audit logs, Unicode password truncation, readiness schema drift and concurrent administrator disabling.
+
+Recommended order: (1) review historical sensitive artifacts/exposure; (2) protect granted discounts and serialize admin status transitions; (3) coordinate event/reservation lifecycle; (4) decide historical invoice/PDF policy; (5) fix expense idempotency and password byte validation; (6) align sessions, audit coverage, health readiness and delivery rules; (7) address capacity, frontend headers, CI and measured performance. This report did not implement those changes.
+
+```powershell
+npm run verify:project-audit -w backend
+npm run audit:inventory -w backend
+```

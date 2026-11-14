@@ -33,6 +33,22 @@ const optionalDate = z.preprocess(
   (v) => (v === "" || v == null ? null : v),
   date.nullable(),
 );
+export const passwordInput = z
+  .string()
+  .min(12)
+  .max(72)
+  .refine(
+    (v) => Buffer.byteLength(v, "utf8") <= 72,
+    "Password must be at most 72 UTF-8 bytes",
+  );
+const currentPassword = z
+  .string()
+  .min(1)
+  .max(72)
+  .refine(
+    (v) => Buffer.byteLength(v, "utf8") <= 72,
+    "Password must be at most 72 UTF-8 bytes",
+  );
 const mobile = z
   .string()
   .trim()
@@ -73,6 +89,14 @@ export const schemas = {
     address: optional,
   }),
   bookings: z.object({
+    booking_discount_type: z.preprocess(
+      (v) => (v == null ? undefined : v),
+      z.enum(["NONE", "FIXED", "PERCENTAGE"]).optional(),
+    ),
+    booking_discount_value: z.preprocess(
+      (v) => (v == null ? undefined : v),
+      money.optional(),
+    ),
     customer_id: id,
     event_type_id: id,
     package_id: optionalId,
@@ -114,7 +138,15 @@ export const schemas = {
       pages: z.coerce.number().int().min(1).max(1000),
       printing_cost: money,
       expected_delivery: optionalDate,
-      actual_delivery: optionalDate,
+      actual_delivery: optionalDate.refine(
+        (v) =>
+          !v ||
+          v <=
+            new Date().toLocaleDateString("en-CA", {
+              timeZone: "Asia/Kolkata",
+            }),
+        "Actual delivery date cannot be in the future",
+      ),
       status: z.enum(stages),
       acknowledgement: optional,
       notes: optional,
@@ -125,6 +157,10 @@ export const schemas = {
       "Delivery date and acknowledgement are required for delivered albums",
     ),
   expenses: z.object({
+    idempotency_key: z.preprocess(
+      (v) => (v == null ? undefined : v),
+      z.uuid().optional(),
+    ),
     date,
     category: text,
     description: text,
@@ -165,21 +201,14 @@ export const schemas = {
   users: z.object({
     name: text,
     email: z.email().transform((v) => v.toLowerCase()),
-    password: z.string().min(12).max(72),
+    password: passwordInput,
     role: z.enum(["admin", "staff"]),
   }),
   changePassword: z.object({
-    current_password: z.string().min(1).max(72),
-    new_password: z
-      .string()
-      .min(12)
-      .max(72)
-      .refine(
-        (v) => Buffer.byteLength(v, "utf8") <= 72,
-        "Password must be at most 72 UTF-8 bytes",
-      ),
+    current_password: currentPassword,
+    new_password: passwordInput,
   }),
-  resetPassword: z.object({ current_password: z.string().min(1).max(72) }),
+  resetPassword: z.object({ current_password: currentPassword }),
 };
 export function parse(kind, data) {
   return schemas[kind].parse(data);

@@ -64,7 +64,7 @@ try {
   );
   assert.equal(
     (await c.query("SELECT count(*)::int n FROM schema_migrations")).rows[0].n,
-    7,
+    8,
   );
   process.env.NODE_ENV = "test";
   process.env.DB_SCHEMA = schema;

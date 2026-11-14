@@ -1,7 +1,7 @@
 import Decimal from "decimal.js";
 const D = Decimal.clone({ precision: 40, rounding: Decimal.ROUND_HALF_UP });
 const bad = (message) => Object.assign(new Error(message), { status: 400 });
-export function bookingPricing(data, old) {
+function basePricing(data, old) {
   if (data.total_amount === undefined) {
     if (data.agreed_amount === undefined)
       throw bad("Enter the total booking amount");
@@ -62,5 +62,98 @@ export function bookingPricing(data, old) {
     discount_type: type,
     discount_value: value.toFixed(2),
     discount_amount: discount.toFixed(2),
+  };
+}
+export function bookingDiscountMetadata(old, paymentDiscounts = 0) {
+  const amount = new D(
+    old?.booking_discount_amount ??
+      new D(old?.discount_amount || 0).minus(paymentDiscounts),
+  );
+  if (amount.lt(0))
+    throw bad(
+      "Stored discounts conflict with granted payment discounts; review the financial audit before editing",
+    );
+  return {
+    booking_discount_amount: amount.toFixed(2),
+    booking_discount_type:
+      old?.booking_discount_type ||
+      (new D(paymentDiscounts).isZero()
+        ? old?.discount_type
+        : amount.gt(0)
+          ? "FIXED"
+          : "NONE") ||
+      "NONE",
+    booking_discount_value: String(
+      old?.booking_discount_value ??
+        (new D(paymentDiscounts).isZero()
+          ? (old?.discount_value ?? 0)
+          : amount),
+    ),
+  };
+}
+export function bookingPricing(data, old, paymentDiscounts = 0) {
+  const granted = new D(paymentDiscounts),
+    base = bookingDiscountMetadata(old, granted);
+  if (data.total_amount === undefined) {
+    if (
+      data.booking_discount_type !== undefined ||
+      data.booking_discount_value !== undefined
+    )
+      throw bad("Enter the total amount when editing the booking discount");
+    const result = basePricing(data, old);
+    if (new D(result.discount_amount).lt(granted))
+      throw bad("Granted payment discounts must be preserved");
+    const same = old && new D(result.discount_amount).eq(old.discount_amount);
+    return {
+      ...result,
+      ...(same
+        ? base
+        : bookingDiscountMetadata(
+            {
+              ...result,
+              booking_discount_amount: null,
+              booking_discount_type: null,
+              booking_discount_value: null,
+            },
+            granted,
+          )),
+    };
+  }
+  let type = data.booking_discount_type ?? data.discount_type ?? "NONE",
+    value = data.booking_discount_value ?? data.discount_value ?? 0;
+  // Older full-record clients send unchanged cumulative fields. Preserve them without applying twice.
+  if (
+    old &&
+    data.booking_discount_type === undefined &&
+    data.booking_discount_value === undefined &&
+    granted.gt(0) &&
+    type === old.discount_type &&
+    new D(value).eq(old.discount_value)
+  ) {
+    type = base.booking_discount_type;
+    value = base.booking_discount_value;
+  }
+  const result = basePricing({
+    total_amount: data.total_amount,
+    discount_type: type,
+    discount_value: value,
+  });
+  const cumulative = new D(result.discount_amount).plus(granted),
+    net = new D(data.total_amount).minus(cumulative);
+  if (net.lt(0))
+    throw bad(
+      "Booking discount plus granted payment discounts exceeds the total amount",
+    );
+  if (data.agreed_amount !== undefined && !net.eq(data.agreed_amount))
+    throw bad("Final agreed amount does not match the total and all discounts");
+  return {
+    ...result,
+    agreed_amount: net.toFixed(2),
+    discount_amount: cumulative.toFixed(2),
+    discount_type: granted.gt(0) ? "FIXED" : type,
+    discount_value: (granted.gt(0) ? cumulative : new D(value)).toFixed(2),
+    booking_discount_type: type,
+    booking_discount_value: new D(value).toFixed(2),
+    booking_discount_amount: result.discount_amount,
   };
 }

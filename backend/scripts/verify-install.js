@@ -65,7 +65,7 @@ try {
         `SELECT count(*)::int AS count FROM ${schema}.schema_migrations`,
       )
     ).rows[0].count,
-    7,
+    8,
   );
   assert.equal(
     (await client.query(`SELECT count(*)::int AS count FROM ${schema}.roles`))

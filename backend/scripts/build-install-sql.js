@@ -46,6 +46,10 @@ const paymentDiscounts = await readFile(
   ),
   "utf8",
 );
+const auditFixes = await readFile(
+  new URL("../database/migrations/008_audit_fixes.up.sql", import.meta.url),
+  "utf8",
+);
 const sql = `-- Photography Studio: one-run FRESH installation (core + invoices + equipment).
 -- Run the entire file in Supabase SQL Editor or psql against the chosen database.
 -- No passwords, customer data, payment data, demo packages or rollback statements.
@@ -69,9 +73,10 @@ ${masters}
 ${staffDetails}
 ${customerDetails}
 ${paymentDiscounts}
+${auditFixes}
 
 CREATE TABLE schema_migrations(version TEXT PRIMARY KEY,applied_at TIMESTAMPTZ NOT NULL DEFAULT now());
-INSERT INTO schema_migrations(version) VALUES('001_invoices_equipment'),('002_payment_reversals'),('003_receipt_design'),('004_master_management'),('005_staff_details'),('006_customer_title_gender'),('007_payment_discounts');
+INSERT INTO schema_migrations(version) VALUES('001_invoices_equipment'),('002_payment_reversals'),('003_receipt_design'),('004_master_management'),('005_staff_details'),('006_customer_title_gender'),('007_payment_discounts'),('008_audit_fixes');
 COMMIT;
 `;
 await writeFile(new URL("../database/install_all.sql", import.meta.url), sql);
@@ -91,6 +96,21 @@ COMMIT;
 `,
 );
 console.log("Created backend/database/install_all.sql for a fresh database.");
+await writeFile(
+  new URL("../database/upgrade_008_audit_fixes.sql", import.meta.url),
+  `-- Review and verify a backup before execution. No financial values are backfilled.
+BEGIN;
+SET LOCAL search_path TO studio,public;
+SELECT pg_advisory_xact_lock(hashtext('studio-migrations:studio'));
+DO $$ BEGIN
+IF NOT EXISTS(SELECT 1 FROM schema_migrations WHERE version='007_payment_discounts') THEN RAISE EXCEPTION 'Apply migration 007 first'; END IF;
+IF EXISTS(SELECT 1 FROM schema_migrations WHERE version='008_audit_fixes') THEN RAISE EXCEPTION 'Audit fixes already applied'; END IF;
+END;$$;
+${auditFixes}
+INSERT INTO schema_migrations(version) VALUES('008_audit_fixes');
+COMMIT;
+`,
+);
 await writeFile(
   new URL("../database/upgrade_007_payment_discounts.sql", import.meta.url),
   `-- Review and back up before execution. Original payments/receipts remain unchanged.

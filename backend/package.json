@@ -20,6 +20,9 @@
     "verify:masters": "node scripts/verify-masters.js",
     "audit:financial": "node scripts/audit-financials.js",
     "verify:financial-audit": "node scripts/verify-financial-audit.js",
+    "verify:project-audit": "node scripts/verify-audit-fixes.js",
+    "verify:audit-fixes": "node scripts/verify-audit-fixes.js",
+    "audit:inventory": "node scripts/audit-project-inventory.js",
     "verify:deployment": "node scripts/check-deployment.js",
     "security:git": "node scripts/audit-git-secrets.js",
     "verify:browser": "node scripts/browser-verify.js"

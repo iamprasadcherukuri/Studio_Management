@@ -1,0 +1,1 @@
+DO $$ BEGIN RAISE EXCEPTION 'Automatic rollback refused: audit fixes preserve financial snapshots, reservation history and request keys. Use a reviewed forward correction or restore a verified pre-008 backup into a separate database.'; END;$$;

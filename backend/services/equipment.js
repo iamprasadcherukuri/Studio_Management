@@ -3,8 +3,10 @@ import { pool, transaction } from "../database/pool.js";
 import { fail } from "./records.js";
 import { audit } from "./invoices.js";
 import { validateRecordMasters } from "./master-values.js";
-export const equipmentSelect = `SELECT e.*,CASE WHEN e.status='Available' AND EXISTS(SELECT 1 FROM equipment_assignments a WHERE a.equipment_id=e.id AND a.status='Active' AND a.assigned_date<=CURRENT_DATE) THEN 'Assigned' ELSE e.status END AS availability FROM equipment e`;
+import { lockScheduling } from "./scheduling.js";
+export const equipmentSelect = `SELECT e.*,CASE WHEN e.status='Available' AND EXISTS(SELECT 1 FROM equipment_assignments a WHERE a.equipment_id=e.id AND a.status='Active' AND a.assigned_date<=(now() AT TIME ZONE 'Asia/Kolkata')::date) THEN 'Assigned' ELSE e.status END AS availability FROM equipment e`;
 async function lockEquipment(c, id) {
+  await lockScheduling(c);
   const row = (
     await c.query("SELECT * FROM equipment WHERE id=$1 FOR UPDATE", [id])
   ).rows[0];
@@ -97,7 +99,7 @@ export async function assignEquipment(data, user) {
     )
       throw fail("The reservation must include the booking event date");
     const conflicts = await c.query(
-      "SELECT id FROM equipment_assignments WHERE equipment_id=$1 AND status='Active' AND (daterange(assigned_date,expected_return_date,'[]') && daterange($2::date,$3::date,'[]') OR expected_return_date<CURRENT_DATE)",
+      "SELECT id FROM equipment_assignments WHERE equipment_id=$1 AND status='Active' AND (daterange(assigned_date,expected_return_date,'[]') && daterange($2::date,$3::date,'[]') OR expected_return_date<(now() AT TIME ZONE 'Asia/Kolkata')::date)",
       [data.equipment_id, data.assigned_date, data.expected_return_date],
     );
     if (conflicts.rowCount)
@@ -134,12 +136,17 @@ export async function returnEquipment(id, date, user) {
     await lockEquipment(c, first.equipment_id);
     const row = (
       await c.query(
-        "SELECT *,CURRENT_DATE::text AS today FROM equipment_assignments WHERE id=$1 FOR UPDATE",
+        "SELECT *,(now() AT TIME ZONE 'Asia/Kolkata')::date::text AS today FROM equipment_assignments WHERE id=$1 FOR UPDATE",
         [id],
       )
     ).rows[0];
     if (date < row.assigned_date || date > row.today)
       throw fail("Return date must be between assignment date and today");
+    if (row.status === "Cancelled")
+      throw fail(
+        "A cancelled reservation was not physically issued and cannot be returned",
+        409,
+      );
     if (row.status === "Returned") {
       if (row.actual_return_date !== date)
         throw fail("Assignment has already been returned", 409);

@@ -82,6 +82,13 @@ try {
   await new Promise((r) => server.on("listening", r));
   const base = `http://127.0.0.1:${server.address().port}/api`;
   async function call(path, method = "GET", body, status = 200) {
+    if (
+      path === "/expenses" &&
+      method === "POST" &&
+      body &&
+      !body.idempotency_key
+    )
+      body = { ...body, idempotency_key: randomUUID() };
     const response = await fetch(base + path, {
       method,
       headers: {
@@ -463,20 +470,8 @@ try {
     "300",
     "Invoice live paid amount reconciles ledger",
   );
-  assert.ok(pdfBefore.includes("₹ 100.00") && pdfAfter.includes("₹ 300.00"));
-  findings.push({
-    id: "F02",
-    severity: "high",
-    finding: "Invoice PDF paid/balance figures are live, not fixed at issue",
-    proof: {
-      before_paid: invoice.paid_amount,
-      after_paid: laterInvoice.paid_amount,
-      before_balance: invoice.balance_amount,
-      after_balance: laterInvoice.balance_amount,
-    },
-    source:
-      "backend/services/invoices.js:invoiceSelect; backend/services/pdf.js:renderPdf",
-  });
+  assert.deepEqual(pdfAfter, pdfBefore);
+  checks.push("F02 original invoice PDF financial text remains unchanged");
   await call(
     "/payments",
     "POST",
@@ -584,20 +579,9 @@ try {
       [booking.id],
     )
   ).rows[0].amount;
-  assert.ok(new Decimal(edited.discount_amount).lt(granted));
-  findings.push({
-    id: "F01",
-    severity: "high",
-    finding:
-      "Editing booking discount can erase already granted payment discounts from the current balance",
-    proof: {
-      payment_discounts: granted,
-      stored_cumulative_discount: edited.discount_amount,
-      net_after_edit: edited.agreed_amount,
-    },
-    source:
-      "backend/services/booking-pricing.js:bookingPricing; backend/services/records.js:writeRecord",
-  });
+  assert.equal(edited.discount_amount, granted);
+  assert.equal(edited.booking_discount_amount, "0.00");
+  checks.push("F01 granted payment discounts survive booking edits");
   const sql = (
     await readFile(
       new URL("../database/financial_audit.sql", import.meta.url),
@@ -607,12 +591,10 @@ try {
   const results = await c.query(sql),
     fixtureAudit = results.find((r) => r.rows?.[0]?.financial_audit)?.rows[0]
       .financial_audit;
-  assert.ok(
-    fixtureAudit.violations.some(
-      (v) => v.check_name === "booking_discount_lost",
-    ),
+  assert.deepEqual(fixtureAudit.violations, []);
+  checks.push(
+    "Read-only SQL confirms the corrected financial records reconcile",
   );
-  checks.push("Read-only SQL detects intentionally reproduced lost discount");
   for (let i = 0; i < 2; i++) {
     const large = await call(
       "/bookings",
@@ -645,22 +627,18 @@ try {
     )
   ).rows[0].amount;
   assert.ok(new Decimal(aggregate).gt("9999999999.99"));
-  await call("/feature-summary", "GET", undefined, 400);
-  findings.push({
-    id: "F03",
-    severity: "medium",
-    finding:
-      "Invoice summary fails when individually valid invoices exceed NUMERIC(12,2) aggregate capacity",
-    proof: { aggregate, maximum_summary: "9999999999.99", http_status: 400 },
-    source: "backend/routes/enhancements.js:/feature-summary",
-  });
+  eq(
+    (await call("/feature-summary")).total_invoiced,
+    aggregate,
+    "F03 large aggregate remains exact",
+  );
   const after = await fingerprint();
   assert.deepEqual(after, before);
   checks.push(
     "Existing source financial records unchanged (row counts and fingerprints)",
   );
   const result = {
-    status: "audit completed with confirmed findings",
+    status: "financial regressions passed with no open reproduced findings",
     checks,
     findings,
     fixture_reconciliation: fixtureAudit,
@@ -671,7 +649,7 @@ try {
   });
   await writeFile(
     new URL(
-      "../../test-results/financial-audit-fixtures.json",
+      "../../test-results/financial-audit-regressions.json",
       import.meta.url,
     ),
     JSON.stringify(result, null, 2),

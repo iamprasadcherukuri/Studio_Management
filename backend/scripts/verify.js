@@ -331,6 +331,7 @@ try {
       date: "2026-11-13",
       category: "Printing",
       description: "Album production",
+      idempotency_key: randomUUID(),
       amount: 500,
       method: "Cash",
     },

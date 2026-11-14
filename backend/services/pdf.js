@@ -61,7 +61,7 @@ export function renderPdf(kind, data) {
       );
       if (kind === "invoice")
         paragraph(
-          `Status: ${data.status === "Void" ? "VOID" : data.payment_status}`,
+          `Status: ${data.status === "Void" ? "VOID" : data.financial_snapshot?.payment_status || "Issued (legacy snapshot unavailable)"}`,
           11,
           data.status === "Void" ? "#b34848" : "#4b607c",
         );
@@ -120,12 +120,28 @@ export function renderPdf(kind, data) {
         pair("Discount", currency(data.discount));
         pair("Tax", "Not applied");
         pair("Invoice total", currency(data.total_amount));
-        pair("Payments received for booking", currency(data.paid_amount));
+        const issued = data.financial_snapshot;
+        pair(
+          "Payments received at issue",
+          issued
+            ? currency(issued.paid_amount)
+            : "Unavailable (legacy invoice)",
+        );
         pair(
           data.status === "Void"
             ? "Invoice balance (void)"
-            : "Outstanding balance",
-          currency(data.balance_amount),
+            : "Outstanding at issue",
+          data.status === "Void"
+            ? currency(0)
+            : issued
+              ? currency(issued.balance_amount)
+              : "Unavailable (legacy invoice)",
+        );
+        paragraph(
+          issued
+            ? "Collection figures are frozen at issue; current payment status is available in the application."
+            : "Legacy invoice: issue-time collection figures were not saved. Historical values have not been invented.",
+          8,
         );
         if (data.status === "Void")
           paragraph("Voided: " + data.void_reason, 10, "#b34848");

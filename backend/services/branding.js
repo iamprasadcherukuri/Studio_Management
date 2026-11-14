@@ -70,8 +70,15 @@ export async function studioSettings() {
       : null,
   };
 }
-export async function saveStudioSettings(data) {
+export async function saveStudioSettings(data, user) {
   return transaction(async (client) => {
+    const before = user
+      ? (
+          await client.query(
+            "SELECT name,phone,email,address,tagline,logo_asset_id,signatory_name,signatory_title,receipt_footer FROM studio_settings WHERE id=1 FOR UPDATE",
+          )
+        ).rows[0]
+      : null;
     let assetId;
     if (data.logo_data_url === null || data.logo_data_url === "")
       assetId = null;
@@ -100,5 +107,16 @@ export async function saveStudioSettings(data) {
         ...(assetId !== undefined ? [assetId] : []),
       ],
     );
+    if (user) {
+      const after = (
+        await client.query(
+          "SELECT name,phone,email,address,tagline,logo_asset_id,signatory_name,signatory_title,receipt_footer FROM studio_settings WHERE id=1",
+        )
+      ).rows[0];
+      await client.query(
+        "INSERT INTO audit_logs(user_id,action,entity,entity_id,details) VALUES($1,'update_settings','studio_settings',1,$2)",
+        [user.id, { before, after }],
+      );
+    }
   });
 }

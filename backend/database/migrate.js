@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { backupDatabase } from "../scripts/backup.js";
+import { migrationVersions } from "./versions.js";
 export async function migrate(client, schema = "studio", down = false) {
   if (!/^[a-z_][a-z0-9_]*$/.test(schema))
     throw new Error("Invalid migration schema");
@@ -43,15 +44,7 @@ export async function migrate(client, schema = "studio", down = false) {
     await client.query(
       "CREATE TABLE IF NOT EXISTS schema_migrations(version TEXT PRIMARY KEY,applied_at TIMESTAMPTZ NOT NULL DEFAULT now())",
     );
-    const versions = [
-      "001_invoices_equipment",
-      "002_payment_reversals",
-      "003_receipt_design",
-      "004_master_management",
-      "005_staff_details",
-      "006_customer_title_gender",
-      "007_payment_discounts",
-    ];
+    const versions = migrationVersions;
     const applied = new Set(
       (await client.query("SELECT version FROM schema_migrations")).rows.map(
         (row) => row.version,

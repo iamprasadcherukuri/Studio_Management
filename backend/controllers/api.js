@@ -6,7 +6,9 @@ import { timingSafeEqual, randomBytes } from "node:crypto";
 import { pool, transaction } from "../database/pool.js";
 import { config } from "../config/env.js";
 import { auth, admin } from "../middleware/auth.js";
-import { parse } from "../services/validation.js";
+import { parse, passwordInput } from "../services/validation.js";
+import { setUserStatus } from "../services/user-status.js";
+import { databaseReady } from "../services/readiness.js";
 import { definitions, writeRecord, fail } from "../services/records.js";
 import { studioSettings, saveStudioSettings } from "../services/branding.js";
 import { masterOptions } from "../services/master-values.js";
@@ -24,10 +26,7 @@ const limited = rateLimit({
 api.get("/health", async (req, res) => {
   res.set("Cache-Control", "no-store");
   try {
-    await pool.query({
-      text: "SELECT l.amount,l.booking_id,p.receipt_number,p.receipt_snapshot,b.total_amount,s.logo_asset_id,v.value_code,k.package_type FROM payment_ledger l CROSS JOIN payments p CROSS JOIN bookings b CROSS JOIN studio_settings s CROSS JOIN master_entity_value v CROSS JOIN master_entity e CROSS JOIN packages k LIMIT 0",
-      query_timeout: 5000,
-    });
+    if (!(await databaseReady())) throw new Error("Schema not ready");
     res.json({ status: "OK", service: "Studio Management API" });
   } catch {
     res.status(503).json({
@@ -66,6 +65,8 @@ api.post("/auth/setup", limited, async (req, res) => {
   res.status(201).json({ message: "Administrator created. Please sign in." });
 });
 api.post("/auth/login", limited, async (req, res) => {
+  if (Buffer.byteLength(String(req.body.password || ""), "utf8") > 72)
+    throw fail("Password must be at most 72 UTF-8 bytes");
   const { rows } = await pool.query(
     "SELECT u.*,r.name AS role FROM users u JOIN roles r ON r.id=u.role_id WHERE lower(email)=$1 AND active=true",
     [
@@ -183,7 +184,7 @@ api.get("/lookups", async (req, res) => {
 api.get("/dashboard", async (req, res) => {
   const metrics = (
     await pool.query(
-      `SELECT (SELECT count(*) FROM customers) AS customers,(SELECT count(*) FROM bookings) AS bookings,(SELECT COALESCE(sum(amount),0) FROM payment_ledger) AS received,(SELECT COALESCE(sum(agreed_amount),0) FROM bookings WHERE status<>'cancelled')-(SELECT COALESCE(sum(amount),0) FROM payment_ledger) AS pending,(SELECT COALESCE(sum(amount),0) FROM expenses) AS expenses,(SELECT count(*) FROM albums WHERE status<>'Delivered') AS pending_albums`,
+      `SELECT (SELECT count(*) FROM customers) AS customers,(SELECT count(*) FROM bookings) AS bookings,(SELECT COALESCE(sum(amount),0) FROM payment_ledger) AS received,(SELECT COALESCE(sum(agreed_amount),0) FROM bookings WHERE status<>'cancelled')-(SELECT COALESCE(sum(amount),0) FROM payment_ledger) AS pending,(SELECT COALESCE(sum(amount),0) FROM expenses) AS expenses,(SELECT COALESCE(sum(amount),0) FROM payment_ledger)-(SELECT COALESCE(sum(amount),0) FROM expenses) AS cash_balance,(SELECT count(*) FROM albums WHERE status<>'Delivered') AS pending_albums`,
     )
   ).rows[0];
   const months = (
@@ -218,7 +219,7 @@ api.get("/customers/:id/history", async (req, res) => {
 api.get("/settings", async (req, res) => res.json(await studioSettings()));
 api.put("/settings", admin, async (req, res) => {
   const v = parse("settings", req.body);
-  await saveStudioSettings(v);
+  await saveStudioSettings(v, req.user);
   res.json(await studioSettings());
 });
 api.get("/users", admin, async (req, res) =>
@@ -236,27 +237,25 @@ api.post("/users", admin, async (req, res) => {
   const v = parse("users", { ...req.body, password: temporaryPassword });
   const hash = await bcrypt.hash(v.password, 12);
   res.status(201).json({
-    ...(
-      await pool.query(
-        "INSERT INTO users(name,email,password_hash,role_id,must_change_password) SELECT $1,$2,$3,id,true FROM roles WHERE name=$4 RETURNING id,name,email,must_change_password",
-        [v.name, v.email, hash, v.role],
-      )
-    ).rows[0],
+    ...(await transaction(async (c) => {
+      const row = (
+        await c.query(
+          "INSERT INTO users(name,email,password_hash,role_id,must_change_password) SELECT $1,$2,$3,id,true FROM roles WHERE name=$4 RETURNING id,name,email,must_change_password",
+          [v.name, v.email, hash, v.role],
+        )
+      ).rows[0];
+      await c.query(
+        "INSERT INTO audit_logs(user_id,action,entity,entity_id,details) VALUES($1,'create_user','users',$2,$3)",
+        [req.user.id, row.id, { role: v.role }],
+      );
+      return row;
+    })),
     temporary_password: temporaryPassword,
   });
 });
 api.patch("/users/:id", admin, async (req, res) => {
-  if (Number(req.params.id) === req.user.id)
-    throw fail("You cannot disable your own account");
-  if (typeof req.body.active !== "boolean")
-    throw fail("active must be boolean");
   res.json(
-    (
-      await pool.query(
-        "UPDATE users SET active=$1 WHERE id=$2 RETURNING id,active",
-        [req.body.active, req.params.id],
-      )
-    ).rows[0],
+    await setUserStatus(Number(req.params.id), req.body.active, req.user),
   );
 });
 api.post("/users/:id/reset-password", admin, limited, async (req, res) => {
@@ -266,6 +265,7 @@ api.post("/users/:id/reset-password", admin, limited, async (req, res) => {
     throw fail("Use your current password to change your own password instead");
   const input = parse("resetPassword", req.body);
   const temporaryPassword = randomBytes(18).toString("base64url");
+  passwordInput.parse(temporaryPassword);
   const hash = await bcrypt.hash(temporaryPassword, 12);
   const user = await transaction(async (c) => {
     const rows = (

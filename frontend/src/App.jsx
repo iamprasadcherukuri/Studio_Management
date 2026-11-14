@@ -3,6 +3,7 @@ import CustomerSearchSelect from "./components/CustomerSearchSelect";
 import SettingsSection from "./components/SettingsSection";
 import BookingInformation from "./components/BookingInformation";
 import PaymentDiscountPreview from "./components/PaymentDiscountPreview";
+import { formatMoney, subtractMoney } from "./services/money";
 import MasterManagement from "./pages/MasterManagement";
 import {
   NavLink,
@@ -55,12 +56,7 @@ const EquipmentPage = React.lazy(() =>
 );
 const RevenueChart = React.lazy(() => import("./components/RevenueChart"));
 
-const money = (n) =>
-  new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 2,
-  }).format(Number(n || 0));
+const money = formatMoney;
 const today = () =>
   new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 const date = (v) =>
@@ -173,8 +169,12 @@ const fields = {
     ["location", "Event location"],
     ["package_id", "Package", "packages", false],
     ["total_amount", "Total booking amount (₹)", "number"],
-    ["discount_type", "Discount type", ["NONE", "PERCENTAGE", "FIXED"]],
-    ["discount_value", "Discount value (% or ₹)", "number"],
+    [
+      "booking_discount_type",
+      "Booking discount type",
+      ["NONE", "PERCENTAGE", "FIXED"],
+    ],
+    ["booking_discount_value", "Booking discount value (% or ₹)", "number"],
     ["agreed_amount", "Final agreed amount (₹)", "number"],
     [
       "status",
@@ -381,12 +381,15 @@ function FormFields({
               [
                 "package_id",
                 "total_amount",
-                "discount_type",
-                "discount_value",
+                "booking_discount_type",
+                "booking_discount_value",
               ].includes(key)
             ) {
-              if (key === "discount_type" && next.discount_type === "NONE")
-                next.discount_value = "0";
+              if (
+                key === "booking_discount_type" &&
+                next.booking_discount_type === "NONE"
+              )
+                next.booking_discount_value = "0";
               setValue(previewBookingPrice(next));
             } else setValue(next);
           },
@@ -454,7 +457,9 @@ function FormFields({
                     ? "[0-9]{10}"
                     : undefined
                 }
-                max={key === "dob" ? today() : undefined}
+                max={
+                  ["dob", "actual_delivery"].includes(key) ? today() : undefined
+                }
                 min={type === "number" ? (key === "pages" ? 1 : 0) : undefined}
                 step={
                   type === "number" ? (key === "pages" ? 1 : "0.01") : undefined
@@ -1128,7 +1133,9 @@ function Dashboard({ user }) {
           <div className="chart-bottom">
             <span>
               Net cash balance{" "}
-              <strong>{money(Number(m.received) - Number(m.expenses))}</strong>
+              <strong>
+                {money(m.cash_balance ?? subtractMoney(m.received, m.expenses))}
+              </strong>
             </span>
             <span>All time · receipts − expenses</span>
           </div>
@@ -1260,7 +1267,9 @@ function Dashboard({ user }) {
         <span>
           <Wallet size={18} />
           Net cash balance{" "}
-          <strong>{money(Number(m.received) - Number(m.expenses))}</strong>
+          <strong>
+            {money(m.cash_balance ?? subtractMoney(m.received, m.expenses))}
+          </strong>
         </span>
         <span>
           <Images size={18} />
@@ -1434,6 +1443,22 @@ function Records({
       row
         ? {
             ...row,
+            ...(kind === "bookings"
+              ? {
+                  booking_discount_type:
+                    row.booking_discount_type ??
+                    (Number(row.payment_discounts) > 0
+                      ? Number(row.booking_discount_amount) > 0
+                        ? "FIXED"
+                        : "NONE"
+                      : row.discount_type),
+                  booking_discount_value:
+                    row.booking_discount_value ??
+                    (Number(row.payment_discounts) > 0
+                      ? row.booking_discount_amount
+                      : row.discount_value),
+                }
+              : {}),
             ...Object.fromEntries(
               Object.entries(row)
                 .filter(
@@ -1455,6 +1480,8 @@ function Records({
             total_amount: "",
             discount_type: "NONE",
             discount_value: "0",
+            booking_discount_type: "NONE",
+            booking_discount_value: "0",
             discount_amount: 0,
             staff_ids: [],
           },
@@ -1809,7 +1836,9 @@ function Records({
                 Record advances separately in Payments after saving this
                 booking. Enter the original total and choose a percentage or
                 fixed discount. The final agreed amount is calculated once and
-                remains the booking's payment limit.
+                remains the booking's payment limit. Granted payment discounts
+                are preserved separately and are never removed by this booking
+                discount.
               </p>
             )}
             {kind === "payments" && (

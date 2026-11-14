@@ -125,7 +125,7 @@ enhancements.get("/equipment", async (req, res) => {
       where +=
         key === "category"
           ? ` AND e.category=$${params.length}`
-          : ` AND (CASE WHEN e.status='Available' AND EXISTS(SELECT 1 FROM equipment_assignments a WHERE a.equipment_id=e.id AND a.status='Active' AND a.assigned_date<=CURRENT_DATE) THEN 'Assigned' ELSE e.status END)=$${params.length}`;
+          : ` AND (CASE WHEN e.status='Available' AND EXISTS(SELECT 1 FROM equipment_assignments a WHERE a.equipment_id=e.id AND a.status='Active' AND a.assigned_date<=(now() AT TIME ZONE 'Asia/Kolkata')::date) THEN 'Assigned' ELSE e.status END)=$${params.length}`;
     }
   await list(req, res, equipmentSelect, where, params);
 });
@@ -244,8 +244,8 @@ enhancements.get("/feature-summary", async (req, res) =>
   res.json(
     (
       await pool.query(`SELECT
- (SELECT coalesce(sum(total_amount),0)::numeric(12,2) FROM invoices WHERE status='Issued') AS total_invoiced,
- (SELECT coalesce(sum(greatest(i.total_amount-coalesce(p.paid,0),0)),0)::numeric(12,2) FROM invoices i LEFT JOIN (SELECT booking_id,sum(amount) AS paid FROM payment_ledger GROUP BY booking_id)p ON p.booking_id=i.booking_id WHERE i.status='Issued') AS invoice_outstanding,
+ (SELECT coalesce(sum(total_amount),0) FROM invoices WHERE status='Issued') AS total_invoiced,
+ (SELECT coalesce(sum(greatest(i.total_amount-coalesce(p.paid,0),0)),0) FROM invoices i LEFT JOIN (SELECT booking_id,sum(amount) AS paid FROM payment_ledger GROUP BY booking_id)p ON p.booking_id=i.booking_id WHERE i.status='Issued') AS invoice_outstanding,
  count(*)::int AS total_equipment,count(*) FILTER(WHERE availability='Available')::int AS available_equipment,count(*) FILTER(WHERE availability='Assigned')::int AS assigned_equipment,count(*) FILTER(WHERE availability='Maintenance')::int AS maintenance_equipment
  FROM (${equipmentSelect}) inventory`)
     ).rows[0],

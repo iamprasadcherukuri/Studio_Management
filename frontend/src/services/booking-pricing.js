@@ -10,8 +10,9 @@ const money = (value) =>
 export function previewBookingPrice(data) {
   try {
     const total = paise(data.total_amount),
-      value = paise(data.discount_value || 0),
-      type = data.discount_type || "NONE";
+      value = paise(data.booking_discount_value ?? data.discount_value ?? 0),
+      type = data.booking_discount_type ?? data.discount_type ?? "NONE",
+      granted = paise(data.payment_discounts || 0);
     if (type === "PERCENTAGE" && value > 10000n)
       throw new Error("Discount cannot exceed 100%");
     const discount =
@@ -20,11 +21,12 @@ export function previewBookingPrice(data) {
         : type === "FIXED"
           ? value
           : 0n;
-    if (discount > total) throw new Error("Discount exceeds total");
+    if (discount + granted > total) throw new Error("Discount exceeds total");
     return {
       ...data,
-      agreed_amount: money(total - discount),
-      discount_amount: money(discount),
+      agreed_amount: money(total - discount - granted),
+      discount_amount: money(discount + granted),
+      booking_discount_amount: money(discount),
     };
   } catch {
     return { ...data, agreed_amount: "", discount_amount: "" };

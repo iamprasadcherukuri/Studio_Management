@@ -17,7 +17,10 @@ try {
   );
   await migrate(client, schema);
   await migrate(client, schema);
-  await migrate(client, schema, true);
+  await assert.rejects(
+    () => migrate(client, schema, true),
+    /rollback refused/i,
+  );
   await migrate(client, schema);
   process.env.NODE_ENV = "test";
   process.env.DB_SCHEMA = schema;
@@ -29,6 +32,13 @@ try {
   const base = `http://127.0.0.1:${server.address().port}/api`;
   let token = "";
   async function call(path, method = "GET", body, status = 200, auth = token) {
+    if (
+      path === "/expenses" &&
+      method === "POST" &&
+      body &&
+      !body.idempotency_key
+    )
+      body = { ...body, idempotency_key: randomUUID() };
     const res = await fetch(base + path, {
       method,
       headers: {
