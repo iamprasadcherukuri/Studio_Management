@@ -1,5 +1,7 @@
 # Photography Studio Management
 
+For day-to-day operation, see the [User Manual](USER_MANUAL.md).
+
 Local React + Express + PostgreSQL application for one photography studio with multiple users. Includes customers, bookings and staff assignments, offline installment payments with printable receipts, album delivery tracking, expenses, CSV reports, users, packages, staff and studio settings. Light blue responsive interface; all dashboard values come from PostgreSQL.
 
 ## Windows setup
