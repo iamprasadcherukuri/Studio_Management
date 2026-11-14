@@ -33,13 +33,27 @@ const staffDetails = await readFile(
   new URL("../database/migrations/005_staff_details.up.sql", import.meta.url),
   "utf8",
 );
-const customerDetails = await readFile(
+const customerDetailsSource = await readFile(
   new URL(
     "../database/migrations/006_customer_title_gender.up.sql",
     import.meta.url,
   ),
   "utf8",
 );
+// Recover installations where the optional columns exist without the 006 marker.
+// Keep the historical migration unchanged; never cast or overwrite customer data.
+const customerDetails = customerDetailsSource
+  .replace("ADD COLUMN title TEXT", "ADD COLUMN IF NOT EXISTS title TEXT")
+  .replace("ADD COLUMN gender TEXT", "ADD COLUMN IF NOT EXISTS gender TEXT")
+  + `
+DO $customer_details_types$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_attribute
+   WHERE attrelid='customers'::regclass AND attname IN ('title','gender')
+     AND NOT attisdropped AND (atttypid NOT IN ('text'::regtype,'varchar'::regtype) OR attgenerated<>'')) THEN
+  RAISE EXCEPTION 'Existing customer title/gender columns must be text or varchar and not generated. No data changed.';
+ END IF;
+END;$customer_details_types$;
+`;
 const paymentDiscounts = await readFile(
   new URL(
     "../database/migrations/007_payment_discounts.up.sql",
@@ -190,7 +204,7 @@ COMMIT;
 );
 const steps = await Promise.all(
   migrationVersions.map(async (version, index) => {
-    const sql = await readFile(
+    const sql = version === '006_customer_title_gender' ? customerDetails : await readFile(
       new URL(`../database/migrations/${version}.up.sql`, import.meta.url),
       "utf8",
     );

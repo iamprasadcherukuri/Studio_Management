@@ -13,7 +13,7 @@ if (
 const c = new pg.Client({ connectionString: process.env.DATABASE_URL });
 await c.connect();
 try {
-  for (const stage of [0, 1, 7]) {
+  for (const stage of [0, 1, 5, 7]) {
     const schema = "studio_upgrade_test_" + randomBytes(6).toString("hex");
     assert.match(schema, /^studio_upgrade_test_[a-f0-9]{12}$/);
     try {
@@ -44,6 +44,9 @@ try {
           ]);
         }
       }
+      if (stage === 5) {
+        await c.query("ALTER TABLE customers ADD COLUMN title TEXT; ALTER TABLE customers ADD COLUMN gender VARCHAR(50)");
+      }
       const user = (
         await c.query(
           "INSERT INTO users(name,email,password_hash,role_id) SELECT 'Upgrade fixture','upgrade@example.test','unused',id FROM roles WHERE name='admin' RETURNING id",
@@ -54,6 +57,9 @@ try {
           "INSERT INTO customers(name,mobile) VALUES('Upgrade fixture','9876543210') RETURNING id",
         )
       ).rows[0];
+      if (stage === 5) {
+        await c.query("UPDATE customers SET title='Dr.',gender='Female' WHERE id=$1", [customer.id]);
+      }
       const booking = (
         await c.query(
           "INSERT INTO bookings(customer_id,event_type_id,event_date,location,agreed_amount) SELECT $1,id,CURRENT_DATE,'Upgrade fixture',1000 FROM event_types ORDER BY id LIMIT 1 RETURNING id",

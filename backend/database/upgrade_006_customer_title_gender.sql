@@ -7,8 +7,8 @@ IF NOT EXISTS(SELECT 1 FROM schema_migrations WHERE version='005_staff_details')
 IF EXISTS(SELECT 1 FROM schema_migrations WHERE version='006_customer_title_gender') THEN RAISE EXCEPTION 'Customer details migration already applied'; END IF;
 END;$$;
 -- Add optional fields without rewriting existing customer records.
-ALTER TABLE customers ADD COLUMN title TEXT;
-ALTER TABLE customers ADD COLUMN gender TEXT;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS title TEXT;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS gender TEXT;
 INSERT INTO master_entity(entity_code,entity_name,display_order) VALUES
 ('CUSTOMER_TITLE','Customer Title',8),('CUSTOMER_GENDER','Customer Gender',9)
 ON CONFLICT(entity_code) DO NOTHING;
@@ -18,6 +18,14 @@ FROM master_entity e CROSS JOIN LATERAL unnest(CASE e.entity_code
 WHEN 'CUSTOMER_TITLE' THEN ARRAY['Mr.','Mrs.','Ms.','Mx.','Dr.']
 WHEN 'CUSTOMER_GENDER' THEN ARRAY['Male','Female','Non-binary','Other','Prefer not to say'] END) WITH ORDINALITY v(name,n)
 WHERE e.entity_code IN ('CUSTOMER_TITLE','CUSTOMER_GENDER') ON CONFLICT(entity_id,value_code) DO NOTHING;
+
+DO $customer_details_types$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_attribute
+   WHERE attrelid='customers'::regclass AND attname IN ('title','gender')
+     AND NOT attisdropped AND (atttypid NOT IN ('text'::regtype,'varchar'::regtype) OR attgenerated<>'')) THEN
+  RAISE EXCEPTION 'Existing customer title/gender columns must be text or varchar and not generated. No data changed.';
+ END IF;
+END;$customer_details_types$;
 
 INSERT INTO schema_migrations(version) VALUES('006_customer_title_gender');
 COMMIT;
