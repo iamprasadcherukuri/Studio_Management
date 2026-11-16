@@ -71,6 +71,35 @@ try {
   for (const table of targets) assert.equal(audit.details.removed_rows[table],1);
   assert.equal((await c.query(`SELECT count(*)::int n FROM "${schema}".audit_logs`)).rows[0].n,original.audit_logs.length+1);
   console.log('PASS: explicit commit empties all 10 transaction tables, preserves setup/counters/IDs and retains audit history');
+  const allTables = (await c.query("SELECT tablename FROM pg_tables WHERE schemaname=$1 ORDER BY tablename", [schema])).rows.map(r=>r.tablename);
+  const beforeAll = await snapshot(allTables);
+  const structureQuery = "SELECT c.relname,c.relkind,a.attname,a.atttypid,a.attnotnull,a.attgenerated FROM pg_class c LEFT JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped WHERE c.relnamespace=$1::regnamespace ORDER BY c.relname,a.attnum";
+  const structures = (await c.query(structureQuery,[schema])).rows;
+  let allSql = (await readFile(new URL('../database/reset_all_data.sql',import.meta.url),'utf8'))
+    .replace(/\bstudio\b/g,schema)
+    .replace("current_database()<>'postgres'",`current_database()<>'${db}'`);
+  await c.query(allSql);
+  assert.deepEqual(await snapshot(allTables),beforeAll);
+  console.log('PASS: all-data preview restores every table, including users, settings and audit history');
+  const external = schema+'_external';
+  try {
+    await c.query(`CREATE SCHEMA "${external}"; CREATE TABLE "${external}".customer_ref(customer_id INTEGER REFERENCES "${schema}".customers(id)); INSERT INTO "${external}".customer_ref VALUES(1)`);
+    await assert.rejects(()=>c.query(allSql.replace(/ROLLBACK;\s*$/,'COMMIT;')), e=>e.code==='0A000');
+    await c.query('ROLLBACK');
+    assert.deepEqual(await snapshot(allTables),beforeAll);
+    console.log('PASS: all-data reset refuses an external-schema FK without changing data');
+  } finally {
+    await c.query('ROLLBACK');
+    await c.query(`DROP SCHEMA IF EXISTS "${external}" CASCADE`);
+  }
+  await c.query(allSql.replace(/ROLLBACK;\s*$/,'COMMIT;'));
+  const afterAll = await snapshot(allTables);
+  for (const table of allTables) {
+    assert.deepEqual(afterAll[table],table==='schema_migrations'?beforeAll[table]:[]);
+  }
+  assert.deepEqual((await c.query(structureQuery,[schema])).rows,structures);
+  assert.deepEqual((await c.query(`SELECT last_value FROM "${schema}".bookings_id_seq`)).rows[0],seq);
+  console.log('PASS: all-data commit clears every data table, preserves migration rows, DB structures and identity sequence');
 } finally {
   await c.query('ROLLBACK');
   await c.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
