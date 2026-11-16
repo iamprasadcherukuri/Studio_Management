@@ -1,0 +1,10 @@
+﻿entity_name,description,display_order,is_active
+Album Type,,1,TRUE
+Payment Type,,2,TRUE
+Event Type,,3,TRUE
+Expense Category,,4,TRUE
+Equipment Category,,5,TRUE
+Album Size,,6,TRUE
+Package Type,,7,TRUE
+Customer Title,,8,TRUE
+Customer Gender,,9,TRUE

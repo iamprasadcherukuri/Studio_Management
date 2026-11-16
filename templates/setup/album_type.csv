@@ -1,0 +1,22 @@
+﻿value_name,description,display_order,is_active
+Wedding Album,,1,TRUE
+Pre-Wedding Album,,2,TRUE
+Engagement Album,,3,TRUE
+Reception Album,,4,TRUE
+Birthday Album,,5,TRUE
+Baby Shower Album,,6,TRUE
+Maternity Album,,7,TRUE
+Baby Photography Album,,8,TRUE
+Naming Ceremony Album,,9,TRUE
+Half Saree Ceremony Album,,10,TRUE
+Dhoti Ceremony Album,,11,TRUE
+Housewarming Album,,12,TRUE
+Anniversary Album,,13,TRUE
+Family Album,,14,TRUE
+Traditional Album,,15,TRUE
+Candid Album,,16,TRUE
+Photo Book,,17,TRUE
+Mini Album,,18,TRUE
+Coffee Table Album,,19,TRUE
+Customized Album,,20,TRUE
+Other,,21,TRUE

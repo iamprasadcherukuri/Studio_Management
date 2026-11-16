@@ -1,0 +1,5 @@
+﻿value_name,description,display_order,is_active
+Basic,,1,TRUE
+Standard,,2,TRUE
+Premium,,3,TRUE
+Customized,,4,TRUE

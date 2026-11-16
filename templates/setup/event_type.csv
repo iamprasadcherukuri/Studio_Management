@@ -1,0 +1,7 @@
+﻿value_name,description,display_order,is_active
+Wedding,,1,TRUE
+Engagement,,2,TRUE
+Reception,,3,TRUE
+Birthday,,4,TRUE
+Pre-Wedding,,5,TRUE
+Other,,6,TRUE

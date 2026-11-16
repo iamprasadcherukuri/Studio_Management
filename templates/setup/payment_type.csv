@@ -1,0 +1,6 @@
+﻿value_name,description,display_order,is_active
+Cash,,1,TRUE
+UPI,,2,TRUE
+Bank Transfer,,3,TRUE
+Cheque,,4,TRUE
+Card,,5,TRUE

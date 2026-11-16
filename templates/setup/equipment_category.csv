@@ -1,0 +1,8 @@
+﻿value_name,description,display_order,is_active
+Camera,,1,TRUE
+Lens,,2,TRUE
+Lighting,,3,TRUE
+Tripod,,4,TRUE
+Audio,,5,TRUE
+Accessories,,6,TRUE
+Other,,7,TRUE

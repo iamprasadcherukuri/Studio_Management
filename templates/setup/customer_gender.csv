@@ -1,0 +1,6 @@
+﻿value_name,description,display_order,is_active
+Male,,1,TRUE
+Female,,2,TRUE
+Non-binary,,3,TRUE
+Other,,4,TRUE
+Prefer not to say,,5,TRUE

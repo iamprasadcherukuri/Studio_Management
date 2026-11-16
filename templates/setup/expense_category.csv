@@ -1,0 +1,6 @@
+﻿value_name,description,display_order,is_active
+Salaries,,1,TRUE
+Equipment,,2,TRUE
+Printing,,3,TRUE
+Travel,,4,TRUE
+Other,,5,TRUE
